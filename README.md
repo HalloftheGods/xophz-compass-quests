@@ -25,7 +25,7 @@ A CRM that manages client profiles, tasks, assets, and integrations without ever
 1. Ensure **Xophz COMPASS** is installed and active.
 2. Upload `xophz-compass-quests` to `/wp-content/plugins/`.
 3. Activate through the Plugins menu.
-4. Access via the COMPASS dashboard → **Questbook**.
+4. Access via the My Compass dashboard → **Questbook**.
 
 ## PHP Class Map
 
