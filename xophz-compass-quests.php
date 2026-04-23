@@ -17,7 +17,7 @@
  * Plugin Name:       Xophz CRM Questbook 
  * Plugin URI:        http://example.com/xophz-questbook-uri/
  * Description:       Questbook is an all-in-one customer relation manager and user activity log.  
- * Version:           26.4.23.237
+ * Version:           26.4.23.880
  * Tests :           1.0.0
  * Author:            Hall of the Gods, Inc. 
  * Author URI:        http://example.com/
@@ -38,7 +38,7 @@ if ( ! defined( 'WPINC' ) ) {
  * Start at version 1.0.0 and use SemVer - https://semver.org
  * Rename this for your plugin and update it as you release new versions.
  */
-define( 'XOPHZ_COMPASS_QUESTS_VERSION', '26.4.23.237' );
+define( 'XOPHZ_COMPASS_QUESTS_VERSION', '26.4.23.880' );
 
 /**
  * The code that runs during plugin activation.
