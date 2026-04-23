@@ -49,6 +49,30 @@ class Xophz_Compass_Quests_REST {
                     'permission_callback' => array( $this, 'check_permission' ),
                 ),
             ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/entries', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_contact_entries' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/unverified', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_unverified_entries' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/claim', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'claim_entry' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
 		});
 	}
 
@@ -238,5 +262,80 @@ class Xophz_Compass_Quests_REST {
         if ( isset( $params['source'] ) ) {
             update_post_meta( $post_id, '_qb_source', sanitize_text_field( $params['source'] ) );
         }
+    }
+
+    public function get_contact_entries( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $entry_ids = get_post_meta( $id, '_qb_forminator_entry' );
+
+        if ( empty( $entry_ids ) || ! class_exists( 'Forminator_API' ) ) {
+            return rest_ensure_response( array() );
+        }
+
+        $entries = array();
+        foreach ( $entry_ids as $entry_id ) {
+            $entry = Forminator_API::get_entry( absint( $entry_id ) );
+            if ( ! is_wp_error( $entry ) && $entry ) {
+                $entries[] = array(
+                    'id'      => $entry->entry_id,
+                    'form_id' => $entry->form_id,
+                    'date'    => $entry->date_created ?? '',
+                    'meta'    => $entry->meta_data ?? array(),
+                );
+            }
+        }
+
+        return rest_ensure_response( $entries );
+    }
+
+    public function get_unverified_entries( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $entry_ids = get_post_meta( $id, '_qb_unverified_entry' );
+
+        if ( empty( $entry_ids ) || ! class_exists( 'Forminator_API' ) ) {
+            return rest_ensure_response( array() );
+        }
+
+        $entries = array();
+        foreach ( $entry_ids as $entry_id ) {
+            $entry = Forminator_API::get_entry( absint( $entry_id ) );
+            if ( ! is_wp_error( $entry ) && $entry ) {
+                $entries[] = array(
+                    'id'      => $entry->entry_id,
+                    'form_id' => $entry->form_id,
+                    'date'    => $entry->date_created ?? '',
+                    'meta'    => $entry->meta_data ?? array(),
+                );
+            }
+        }
+
+        return rest_ensure_response( $entries );
+    }
+
+    public function claim_entry( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $params = $request->get_json_params();
+        $entry_id = isset( $params['entry_id'] ) ? absint( $params['entry_id'] ) : 0;
+        $action = isset( $params['action'] ) ? sanitize_text_field( $params['action'] ) : '';
+
+        if ( ! $entry_id || ! in_array( $action, array( 'approve', 'reject' ), true ) ) {
+            return new WP_Error( 'invalid_params', 'Missing entry_id or invalid action', array( 'status' => 400 ) );
+        }
+
+        $unverified_ids = get_post_meta( $id, '_qb_unverified_entry' );
+        $is_pending = in_array( (string) $entry_id, array_map( 'strval', $unverified_ids ), true );
+
+        if ( ! $is_pending ) {
+            return new WP_Error( 'not_found', 'Entry is not pending verification for this contact', array( 'status' => 404 ) );
+        }
+
+        delete_post_meta( $id, '_qb_unverified_entry', $entry_id );
+
+        if ( $action === 'approve' ) {
+            add_post_meta( $id, '_qb_forminator_entry', $entry_id );
+            return rest_ensure_response( array( 'success' => true, 'message' => 'Entry approved and linked.' ) );
+        }
+
+        return rest_ensure_response( array( 'success' => true, 'message' => 'Entry rejected and removed.' ) );
     }
 }
