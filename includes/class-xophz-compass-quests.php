@@ -182,6 +182,9 @@ class Xophz_Compass_Quests {
 
 		$this->loader->add_action( 'add_meta_boxes', $plugin_admin, 'add_questbook_assignment_meta_box', 10, 2 );
 		$this->loader->add_action( 'save_post', $plugin_admin, 'save_questbook_assignment_meta', 10, 2 );
+
+		// Autopilot Workflow Hook
+		$this->loader->add_action( 'save_post_questbook_log', $plugin_cpt, 'handle_workflow_triggers', 10, 3 );
 	}
 
 	/**

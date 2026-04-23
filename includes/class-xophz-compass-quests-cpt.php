@@ -135,4 +135,25 @@ class Xophz_Compass_Quests_CPT {
 
 		register_post_type( 'questbook_log', $log_args );
 	}
+
+	/**
+	 * Autopilot Workflow Engine: Automate pipeline stages based on logs
+	 */
+	public function handle_workflow_triggers( $post_id, $post, $update ) {
+		// Prevent infinite loops during updates or revisions
+		if ( wp_is_post_revision( $post_id ) ) return;
+		
+		$contact_id = get_post_meta( $post_id, '_qb_contact_id', true );
+		$direction = get_post_meta( $post_id, '_qb_direction', true );
+		
+		// Autopilot Rule: If a fresh inbound message arrives, automatically bump lead status to 'Contacted'
+		if ( $contact_id && $direction === 'inbound' && ! $update ) {
+			$current_status = get_post_meta( $contact_id, '_qb_lead_status', true );
+			
+			if ( empty($current_status) || strtolower($current_status) === 'new' || strtolower($current_status) === 'lost' ) {
+				update_post_meta( $contact_id, '_qb_lead_status', 'Contacted' );
+				// TODO: Fire Magic Cloak notification to the assigned agent
+			}
+		}
+	}
 }

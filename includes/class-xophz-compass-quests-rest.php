@@ -73,6 +73,81 @@ class Xophz_Compass_Quests_REST {
                     'permission_callback' => array( $this, 'check_permission' ),
                 ),
             ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/logs', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_contact_logs' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_contact_log' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                )
+            ) );
+
+            // Webhooks
+            register_rest_route( 'questbook/v1', '/webhooks/twilio', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'handle_twilio_webhook' ),
+                    'permission_callback' => '__return_true', 
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/webhooks/email', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'handle_email_webhook' ),
+                    'permission_callback' => '__return_true',
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/templates', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_templates' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/settings', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_settings' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods'  => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'update_settings' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/logs/(?P<log_id>\d+)/promote', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'promote_log_to_quest' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/inbox', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_global_inbox' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/read', array(
+                array(
+                    'methods'  => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'mark_contact_logs_read' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
 		});
 	}
 
@@ -337,5 +412,349 @@ class Xophz_Compass_Quests_REST {
         }
 
         return rest_ensure_response( array( 'success' => true, 'message' => 'Entry rejected and removed.' ) );
+    }
+
+    public function get_contact_logs( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        
+        $args = array(
+            'post_type'      => 'questbook_log',
+            'posts_per_page' => -1,
+            'meta_query'     => array(
+                array(
+                    'key'     => '_qb_contact_id',
+                    'value'   => $id,
+                    'compare' => '='
+                )
+            ),
+            'orderby'        => 'date',
+            'order'          => 'ASC'
+        );
+        
+        $logs = get_posts( $args );
+        $formatted_logs = array();
+        
+        foreach ( $logs as $log ) {
+            $formatted_logs[] = array(
+                'id'         => $log->ID,
+                'title'      => $log->post_title,
+                'content'    => get_post_meta( $log->ID, '_qb_message_payload', true ),
+                'type'       => get_post_meta( $log->ID, '_qb_log_type', true ),
+                'direction'  => get_post_meta( $log->ID, '_qb_direction', true ),
+                'internal'   => get_post_meta( $log->ID, '_qb_is_internal', true ) === 'yes',
+                'promoted_to'=> get_post_meta( $log->ID, '_qb_promoted_to', true ),
+                'is_read'    => get_post_meta( $log->ID, '_qb_is_read', true ) !== 'no',
+                'date'       => $log->post_date,
+            );
+        }
+        
+        return rest_ensure_response( $formatted_logs );
+    }
+
+    public function create_contact_log( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $params = $request->get_json_params();
+        
+        $type = isset( $params['type'] ) ? sanitize_text_field( $params['type'] ) : 'note';
+        $content = isset( $params['content'] ) ? sanitize_textarea_field( $params['content'] ) : '';
+        $internal = isset( $params['internal'] ) && $params['internal'] ? 'yes' : 'no';
+        
+        if ( empty( $content ) ) {
+            return new WP_Error( 'empty_content', 'Log content cannot be empty', array( 'status' => 400 ) );
+        }
+        
+        $post_data = array(
+            'post_title'   => ucfirst( $type ) . ' Log',
+            'post_type'    => 'questbook_log',
+            'post_status'  => 'publish',
+        );
+        
+        $log_id = wp_insert_post( $post_data );
+        
+        if ( is_wp_error( $log_id ) ) {
+            return $log_id;
+        }
+        
+        update_post_meta( $log_id, '_qb_contact_id', $id );
+        update_post_meta( $log_id, '_qb_log_type', $type );
+        update_post_meta( $log_id, '_qb_direction', 'outbound' ); 
+        update_post_meta( $log_id, '_qb_is_internal', $internal );
+        update_post_meta( $log_id, '_qb_message_payload', $content );
+        update_post_meta( $log_id, '_qb_is_read', 'yes' );
+        
+        if ( $type === 'sms' && $internal === 'no' ) {
+            $to_phone = get_post_meta( $id, '_qb_phone', true );
+            $sid = get_option( 'qb_twilio_account_sid' );
+            $token = get_option( 'qb_twilio_auth_token' );
+            $from_num = get_option( 'qb_twilio_phone_number' );
+
+            if ( $to_phone && $sid && $token && $from_num ) {
+                $twilio_url = "https://api.twilio.com/2010-04-01/Accounts/$sid/Messages.json";
+                $args = array(
+                    'headers' => array(
+                        'Authorization' => 'Basic ' . base64_encode( "$sid:$token" )
+                    ),
+                    'body' => array(
+                        'To'   => $to_phone,
+                        'From' => $from_num,
+                        'Body' => $content
+                    )
+                );
+                $response = wp_remote_post( $twilio_url, $args );
+                if ( is_wp_error( $response ) ) {
+                    error_log( 'Questbook Twilio Error: ' . $response->get_error_message() );
+                }
+            } else {
+                error_log('Questbook Twilio Error: Missing API keys or Contact Phone Number.');
+            }
+        } elseif ( $type === 'email' && $internal === 'no' ) {
+            $to_email = get_post_meta( $id, '_qb_raw_email', true );
+            if ( $to_email ) {
+                // Future enhancement: Fetch from_email and subject from settings
+                $subject = "Message from Compass Support";
+                wp_mail( $to_email, $subject, $content );
+            }
+        }
+        
+        return rest_ensure_response( array( 'success' => true, 'log_id' => $log_id ) );
+    }
+
+    public function handle_twilio_webhook( WP_REST_Request $request ) {
+        $params = $request->get_body_params();
+        $from = isset( $params['From'] ) ? sanitize_text_field( $params['From'] ) : '';
+        $body = isset( $params['Body'] ) ? sanitize_textarea_field( $params['Body'] ) : '';
+        
+        if ( empty( $from ) || empty( $body ) ) {
+            return new WP_Error( 'missing_data', 'Missing From or Body', array( 'status' => 400 ) );
+        }
+        
+        $contacts = get_posts( array(
+            'post_type'  => 'questbook_contact',
+            'meta_key'   => '_qb_phone',
+            'meta_value' => $from,
+            'numberposts'=> 1
+        ) );
+        
+        if ( empty( $contacts ) ) {
+            $contact_id = wp_insert_post( array(
+                'post_title'  => 'Unknown (' . $from . ')',
+                'post_type'   => 'questbook_contact',
+                'post_status' => 'publish'
+            ) );
+            update_post_meta( $contact_id, '_qb_phone', $from );
+        } else {
+            $contact_id = $contacts[0]->ID;
+        }
+        
+        $log_id = wp_insert_post( array(
+            'post_title'   => 'Inbound SMS',
+            'post_type'    => 'questbook_log',
+            'post_status'  => 'publish',
+        ) );
+        
+        update_post_meta( $log_id, '_qb_contact_id', $contact_id );
+        update_post_meta( $log_id, '_qb_log_type', 'sms' );
+        update_post_meta( $log_id, '_qb_direction', 'inbound' );
+        update_post_meta( $log_id, '_qb_is_internal', 'no' );
+        update_post_meta( $log_id, '_qb_message_payload', $body );
+        update_post_meta( $log_id, '_qb_is_read', 'no' );
+        
+        $response = new WP_REST_Response( '<Response></Response>' );
+        $response->header( 'Content-Type', 'text/xml' );
+        return $response;
+    }
+
+    public function handle_email_webhook( WP_REST_Request $request ) {
+        $params = $request->get_params();
+        $from = isset( $params['from'] ) ? sanitize_text_field( $params['from'] ) : '';
+        $text = isset( $params['text'] ) ? sanitize_textarea_field( $params['text'] ) : '';
+        
+        if ( empty( $from ) ) return new WP_Error( 'missing_data', 'Missing from', array('status' => 400) );
+        
+        preg_match( '/<([^>]+)>/', $from, $matches );
+        $raw_email = isset( $matches[1] ) ? $matches[1] : $from;
+        
+        $contacts = get_posts( array(
+            'post_type'  => 'questbook_contact',
+            'meta_key'   => '_qb_raw_email',
+            'meta_value' => $raw_email,
+            'numberposts'=> 1
+        ) );
+        
+        $contact_id = ! empty( $contacts ) ? $contacts[0]->ID : 0;
+        if ( ! $contact_id ) {
+             $contact_id = wp_insert_post( array(
+                'post_title'  => 'Unknown (' . $raw_email . ')',
+                'post_type'   => 'questbook_contact',
+                'post_status' => 'publish'
+            ) );
+            update_post_meta( $contact_id, '_qb_raw_email', $raw_email );
+        }
+        
+        $log_id = wp_insert_post( array(
+            'post_title'   => 'Inbound Email',
+            'post_type'    => 'questbook_log',
+            'post_status'  => 'publish',
+        ) );
+        
+        update_post_meta( $log_id, '_qb_contact_id', $contact_id );
+        update_post_meta( $log_id, '_qb_log_type', 'email' );
+        update_post_meta( $log_id, '_qb_direction', 'inbound' );
+        update_post_meta( $log_id, '_qb_is_internal', 'no' );
+        update_post_meta( $log_id, '_qb_message_payload', $text );
+        update_post_meta( $log_id, '_qb_is_read', 'no' );
+        
+        return rest_ensure_response( array('success' => true) );
+    }
+
+    public function get_templates( WP_REST_Request $request ) {
+        $templates = get_option( 'qb_communication_templates', array(
+            array( 'title' => 'Welcome Message', 'content' => 'Hi {{contact.name}}, thanks for reaching out!' ),
+            array( 'title' => 'Follow Up', 'content' => 'Just checking in on our previous conversation.' ),
+        ) );
+        
+        return rest_ensure_response( $templates );
+    }
+
+    public function get_settings( WP_REST_Request $request ) {
+        $settings = array(
+            'twilio_account_sid'   => get_option( 'qb_twilio_account_sid', '' ),
+            'twilio_auth_token'    => get_option( 'qb_twilio_auth_token', '' ),
+            'twilio_phone_number'  => get_option( 'qb_twilio_phone_number', '' ),
+            'templates'            => get_option( 'qb_communication_templates', array(
+                array( 'title' => 'Welcome Message', 'content' => 'Hi {{contact.name}}, thanks for reaching out!' ),
+                array( 'title' => 'Follow Up', 'content' => 'Just checking in on our previous conversation.' ),
+            ) )
+        );
+        return rest_ensure_response( $settings );
+    }
+
+    public function update_settings( WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+        
+        if ( isset( $params['twilio_account_sid'] ) ) {
+            update_option( 'qb_twilio_account_sid', sanitize_text_field( $params['twilio_account_sid'] ) );
+        }
+        if ( isset( $params['twilio_auth_token'] ) ) {
+            update_option( 'qb_twilio_auth_token', sanitize_text_field( $params['twilio_auth_token'] ) );
+        }
+        if ( isset( $params['twilio_phone_number'] ) ) {
+            update_option( 'qb_twilio_phone_number', sanitize_text_field( $params['twilio_phone_number'] ) );
+        }
+        if ( isset( $params['templates'] ) && is_array( $params['templates'] ) ) {
+            $clean_templates = array();
+            foreach( $params['templates'] as $t ) {
+                $clean_templates[] = array(
+                    'title'   => sanitize_text_field( $t['title'] ),
+                    'content' => sanitize_textarea_field( $t['content'] )
+                );
+            }
+            update_option( 'qb_communication_templates', $clean_templates );
+        }
+        
+        return rest_ensure_response( array( 'success' => true ) );
+    }
+
+    public function promote_log_to_quest( WP_REST_Request $request ) {
+        $log_id = $request->get_param( 'log_id' );
+        $log = get_post( $log_id );
+        
+        if ( ! $log || $log->post_type !== 'questbook_log' ) {
+            return new WP_Error( 'not_found', 'Log not found', array( 'status' => 404 ) );
+        }
+        
+        $contact_id = get_post_meta( $log_id, '_qb_contact_id', true );
+        $content = get_post_meta( $log_id, '_qb_message_payload', true );
+        
+        $quest_data = array(
+            'post_title'   => 'Follow up: ' . wp_trim_words( $content, 5 ),
+            'post_content' => "<strong>Original Message:</strong><br><br>" . nl2br( esc_html( $content ) ),
+            'post_type'    => 'questbook_quest',
+            'post_status'  => 'publish', 
+        );
+        
+        $quest_id = wp_insert_post( $quest_data );
+        
+        if ( is_wp_error( $quest_id ) ) {
+            return $quest_id;
+        }
+        
+        // Link quest to contact
+        if ( $contact_id ) {
+            update_post_meta( $quest_id, '_qb_contact_id', $contact_id );
+        }
+        
+        // Mark log as promoted
+        update_post_meta( $log_id, '_qb_promoted_to', $quest_id );
+        
+        return rest_ensure_response( array( 'success' => true, 'quest_id' => $quest_id ) );
+    }
+
+    public function get_global_inbox( WP_REST_Request $request ) {
+        $args = array(
+            'post_type'      => 'questbook_log',
+            'posts_per_page' => 100,
+            'orderby'        => 'date',
+            'order'          => 'DESC',
+            // Retrieve recent logs. We can filter further by inbound if needed.
+        );
+
+        $query = new WP_Query( $args );
+        $logs = array();
+        
+        foreach ( $query->posts as $log ) {
+            $contact_id = get_post_meta( $log->ID, '_qb_contact_id', true );
+            $contact_name = 'Unknown';
+            if ( $contact_id ) {
+                $contact_name = get_the_title( $contact_id );
+            }
+            
+            $logs[] = array(
+                'id'         => $log->ID,
+                'contact_id' => $contact_id,
+                'contact_name'=> $contact_name,
+                'title'      => $log->post_title,
+                'content'    => get_post_meta( $log->ID, '_qb_message_payload', true ),
+                'type'       => get_post_meta( $log->ID, '_qb_log_type', true ),
+                'direction'  => get_post_meta( $log->ID, '_qb_direction', true ),
+                'internal'   => get_post_meta( $log->ID, '_qb_is_internal', true ) === 'yes',
+                'promoted_to'=> get_post_meta( $log->ID, '_qb_promoted_to', true ),
+                'is_read'    => get_post_meta( $log->ID, '_qb_is_read', true ) !== 'no',
+                'date'       => $log->post_date,
+            );
+        }
+        
+        return rest_ensure_response( $logs );
+    }
+
+    public function mark_contact_logs_read( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $args = array(
+            'post_type'      => 'questbook_log',
+            'posts_per_page' => -1,
+            'meta_query'     => array(
+                'relation' => 'AND',
+                array(
+                    'key'   => '_qb_contact_id',
+                    'value' => $id,
+                ),
+                array(
+                    'key'   => '_qb_direction',
+                    'value' => 'inbound',
+                ),
+                array(
+                    'key'     => '_qb_is_read',
+                    'value'   => 'no',
+                    'compare' => '='
+                )
+            )
+        );
+
+        $unread_logs = get_posts( $args );
+        foreach ( $unread_logs as $log ) {
+            update_post_meta( $log->ID, '_qb_is_read', 'yes' );
+        }
+
+        return rest_ensure_response( array( 'success' => true, 'marked' => count($unread_logs) ) );
     }
 }

@@ -123,6 +123,7 @@ class Xophz_Compass_Quests_WPMUDEV {
                 ) );
 
                 if ( ! is_wp_error( $post_id ) ) {
+                    $existing_contact = $post_id;
                     update_post_meta( $post_id, '_qb_raw_email', sanitize_email( $email ) );
                     if ( ! empty( $phone ) ) {
                         update_post_meta( $post_id, '_qb_phone', sanitize_text_field( $phone ) );
@@ -133,6 +134,34 @@ class Xophz_Compass_Quests_WPMUDEV {
                     // Safe to attach since it's a brand new lead
                     add_post_meta( $post_id, '_qb_forminator_entry', $entry_id );
                 }
+            }
+        }
+
+        // Finalize contact ID
+        $final_contact_id = $existing_contact && ! is_wp_error( $existing_contact ) ? $existing_contact : false;
+
+        // Inject into Comm-Link
+        if ( $final_contact_id ) {
+            $form_details = array();
+            foreach ( $field_data_array as $field ) {
+                $val = is_array($field['value']) ? implode(', ', $field['value']) : $field['value'];
+                $form_details[] = $field['name'] . ': ' . $val;
+            }
+            $payload = "Form Submitted: Forminator Module #" . absint( $module_id ) . "\n\n" . implode("\n", $form_details);
+
+            $log_id = wp_insert_post( array(
+                'post_title'   => 'Inbound Webform',
+                'post_type'    => 'questbook_log',
+                'post_status'  => 'publish',
+            ) );
+            
+            if ( ! is_wp_error( $log_id ) ) {
+                update_post_meta( $log_id, '_qb_contact_id', $final_contact_id );
+                update_post_meta( $log_id, '_qb_log_type', 'webform' );
+                update_post_meta( $log_id, '_qb_direction', 'inbound' );
+                update_post_meta( $log_id, '_qb_is_internal', 'no' );
+                update_post_meta( $log_id, '_qb_message_payload', $payload );
+                update_post_meta( $log_id, '_qb_is_read', 'no' );
             }
         }
     }
@@ -162,6 +191,27 @@ class Xophz_Compass_Quests_WPMUDEV {
                 update_post_meta( $post_id, '_qb_raw_email', sanitize_email( $email ) );
                 update_post_meta( $post_id, '_qb_lead_status', 'New Lead' );
                 update_post_meta( $post_id, '_qb_source', 'Hustle Opt-in #' . absint( $module_id ) );
+            }
+            $existing_contact = $post_id;
+        }
+
+        // Inject Hustle opt-in to Comm-Link
+        $final_contact_id = $existing_contact && ! is_wp_error( $existing_contact ) ? $existing_contact : false;
+        if ( $final_contact_id ) {
+            $payload = "Opt-in Received: Hustle Module #" . absint( $module_id );
+            $log_id = wp_insert_post( array(
+                'post_title'   => 'Inbound Opt-in',
+                'post_type'    => 'questbook_log',
+                'post_status'  => 'publish',
+            ) );
+            
+            if ( ! is_wp_error( $log_id ) ) {
+                update_post_meta( $log_id, '_qb_contact_id', $final_contact_id );
+                update_post_meta( $log_id, '_qb_log_type', 'webform' );
+                update_post_meta( $log_id, '_qb_direction', 'inbound' );
+                update_post_meta( $log_id, '_qb_is_internal', 'no' );
+                update_post_meta( $log_id, '_qb_message_payload', $payload );
+                update_post_meta( $log_id, '_qb_is_read', 'no' );
             }
         }
     }
