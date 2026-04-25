@@ -15,7 +15,7 @@
  * @wordpress-plugin
  * Category:          Command Deck
  * Plugin Name:       Xophz CRM Questbook 
- * Plugin URI:        http://example.com/xophz-questbook-uri/
+ * Plugin URI:        https://github.com/HalloftheGods/xophz-compass-quests
  * Description:       Questbook is an all-in-one customer relation manager and user activity log.  
  * Version:           26.4.24
  * Tests :           1.0.0
