@@ -349,8 +349,8 @@ class Xophz_Compass_Quests_REST {
 
         $entries = array();
         foreach ( $entry_ids as $entry_id ) {
-            $entry = Forminator_API::get_entry( absint( $entry_id ) );
-            if ( ! is_wp_error( $entry ) && $entry ) {
+            $entry = class_exists('Forminator_Form_Entry_Model') ? new Forminator_Form_Entry_Model( absint( $entry_id ) ) : null;
+            if ( ! is_wp_error( $entry ) && $entry && isset($entry->entry_id) ) {
                 $entries[] = array(
                     'id'      => $entry->entry_id,
                     'form_id' => $entry->form_id,
@@ -373,8 +373,8 @@ class Xophz_Compass_Quests_REST {
 
         $entries = array();
         foreach ( $entry_ids as $entry_id ) {
-            $entry = Forminator_API::get_entry( absint( $entry_id ) );
-            if ( ! is_wp_error( $entry ) && $entry ) {
+            $entry = class_exists('Forminator_Form_Entry_Model') ? new Forminator_Form_Entry_Model( absint( $entry_id ) ) : null;
+            if ( ! is_wp_error( $entry ) && $entry && isset($entry->entry_id) ) {
                 $entries[] = array(
                     'id'      => $entry->entry_id,
                     'form_id' => $entry->form_id,
@@ -696,7 +696,6 @@ class Xophz_Compass_Quests_REST {
             'posts_per_page' => 100,
             'orderby'        => 'date',
             'order'          => 'DESC',
-            // Retrieve recent logs. We can filter further by inbound if needed.
         );
 
         $query = new WP_Query( $args );
@@ -723,6 +722,102 @@ class Xophz_Compass_Quests_REST {
                 'date'       => $log->post_date,
             );
         }
+
+        // Fetch recent Forminator entries natively to ensure the inbox shows them
+        // even if the webhook failed or they are older than the CRM plugin.
+        if ( class_exists( 'Forminator_API' ) ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'frmt_form_entry';
+            if ( $wpdb->get_var( "SHOW TABLES LIKE '$table'" ) === $table ) {
+                $recent_entries = $wpdb->get_results( "SELECT entry_id, form_id, date_created FROM $table ORDER BY date_created DESC LIMIT 50" );
+                
+                foreach ( $recent_entries as $entry ) {
+                    // Check if this entry is already linked as a questbook log (to avoid duplicates)
+                    // We identify duplicates if a log has the exact same payload or if we just want to show raw entries.
+                    // Actually, the webhook creates a log. If the log exists, we don't need to duplicate.
+                    // However, we'll format it as an inbox item.
+                    
+                    $form_id = $entry->form_id;
+                    $full_entry = class_exists('Forminator_Form_Entry_Model') ? new Forminator_Form_Entry_Model( $entry->entry_id ) : null;
+                    
+                    $email = 'Unknown';
+                    $name = 'Form Submission';
+                    $content_parts = array();
+                    
+                    if ( ! is_wp_error( $full_entry ) && $full_entry && ! empty( $full_entry->meta_data ) ) {
+                        foreach ( $full_entry->meta_data as $meta_key => $meta ) {
+                            $meta_name = isset( $meta['name'] ) ? $meta['name'] : $meta_key;
+                            $meta_val  = isset( $meta['value'] ) ? $meta['value'] : '';
+
+                            if ( is_array( $meta_val ) ) {
+                                $meta_val = implode( ', ', $meta_val );
+                            }
+
+                            if ( strpos( $meta_name, 'email' ) !== false ) {
+                                $email = $meta_val;
+                            }
+                            if ( strpos( $meta_name, 'name' ) !== false && $name === 'Form Submission' ) {
+                                $name = $meta_val;
+                            }
+                            if ( ! empty( $meta_val ) && is_string( $meta_val ) && strpos( $meta_name, '_' ) !== 0 ) {
+                                $content_parts[] = ucfirst( str_replace('-', ' ', $meta_name) ) . ': ' . $meta_val;
+                            }
+                        }
+                    }
+                    
+                    $contact_id = 0;
+                    if ( $email !== 'Unknown' ) {
+                        // First check _qb_raw_email
+                        $args = array(
+                            'post_type'  => 'questbook_contact',
+                            'meta_key'   => '_qb_raw_email',
+                            'meta_value' => $email,
+                            'fields'     => 'ids',
+                            'numberposts' => 1
+                        );
+                        $matched = get_posts($args);
+                        if ( ! empty($matched) ) {
+                            $contact_id = $matched[0];
+                        } else {
+                            // Check if a wp_user exists with this email
+                            $user = get_user_by( 'email', $email );
+                            if ( $user ) {
+                                 $args = array(
+                                    'post_type'  => 'questbook_contact',
+                                    'meta_key'   => '_qb_user_id',
+                                    'meta_value' => $user->ID,
+                                    'fields'     => 'ids',
+                                    'numberposts' => 1
+                                );
+                                $matched = get_posts( $args );
+                                if ( ! empty($matched) ) {
+                                    $contact_id = $matched[0];
+                                }
+                            }
+                        }
+                    }
+                    
+                    $logs[] = array(
+                        'id'         => 'forminator_' . $entry->entry_id,
+                        'contact_id' => $contact_id, // Linked dynamically or 0
+                        'contact_name'=> $name . ( $email !== 'Unknown' ? " ($email)" : '' ),
+                        'title'      => 'Forminator Form #' . $form_id,
+                        'content'    => implode( "\n", $content_parts ),
+                        'type'       => 'webform',
+                        'direction'  => 'inbound',
+                        'internal'   => false,
+                        'promoted_to'=> '',
+                        'is_read'    => false, // We could track read state if needed
+                        'date'       => $entry->date_created,
+                    );
+                }
+            }
+        }
+        
+        // Sort all by date descending
+        usort( $logs, function($a, $b) {
+            return strtotime($b['date']) - strtotime($a['date']);
+        });
         
         return rest_ensure_response( $logs );
     }
