@@ -196,7 +196,26 @@ class Xophz_Compass_Quests_CPT {
 			
 			if ( empty($current_status) || strtolower($current_status) === 'new' || strtolower($current_status) === 'lost' ) {
 				update_post_meta( $contact_id, '_qb_lead_status', 'Contacted' );
-				// TODO: Fire Magic Cloak notification to the assigned agent
+				
+				// Fire Magic Cloak notification to the assigned agent
+				$agent_id = get_post_meta( $contact_id, '_qb_assigned_agent', true );
+				if ( ! $agent_id ) {
+					$agent_id = get_post_field( 'post_author', $contact_id );
+				}
+				
+				if ( $agent_id ) {
+					$payload = array(
+						'id' => 'lead_reply_' . $contact_id . '_' . time(),
+						'title' => 'New Lead Reply',
+						'content' => get_the_title( $contact_id ) . ' just replied to your message.',
+						'icon' => 'fas fa-comment-dots',
+						'color' => 'success',
+						'actionLabel' => 'View Lead',
+						'actionRoute' => 'questbook-profile',
+						'actionParams' => array( 'id' => $contact_id )
+					);
+					do_action( 'magic_cloak_queue_direct_hint', $agent_id, $payload );
+				}
 			}
 		}
 	}
