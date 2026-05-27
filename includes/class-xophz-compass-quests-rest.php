@@ -141,10 +141,132 @@ class Xophz_Compass_Quests_REST {
                 ),
             ) );
 
+            register_rest_route( 'questbook/v1', '/inbox/link', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'link_inbox_submission' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/inbox/create-contact', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_contact_from_submission' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/create-user', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_wp_user_from_contact' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
             register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/read', array(
                 array(
                     'methods'  => WP_REST_Server::EDITABLE,
                     'callback' => array( $this, 'mark_contact_logs_read' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/events', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_events' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_event' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/events/(?P<id>\d+)', array(
+                array(
+                    'methods' => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'update_event' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::DELETABLE,
+                    'callback' => array( $this, 'delete_event' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/boards', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_boards' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_board' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/boards/(?P<id>\d+)', array(
+                array(
+                    'methods' => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'update_board' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::DELETABLE,
+                    'callback' => array( $this, 'delete_board' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+            register_rest_route( 'questbook/v1', '/quests', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_quests' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_quest' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/quests/(?P<id>\d+)', array(
+                array(
+                    'methods' => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'update_quest' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::DELETABLE,
+                    'callback' => array( $this, 'delete_quest' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/quests', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_contact_quests' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'assign_quest_to_contact' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/quests/(?P<quest_id>\d+)', array(
+                array(
+                    'methods' => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'update_contact_quest' ),
                     'permission_callback' => array( $this, 'check_permission' ),
                 ),
             ) );
@@ -157,20 +279,36 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function get_contacts( WP_REST_Request $request ) {
-        // Map to questbook_contact CPT and merge with connected wp_users data
+        $page = $request->get_param( 'page' ) ? absint( $request->get_param( 'page' ) ) : 1;
+        $per_page = $request->get_param( 'per_page' ) ? absint( $request->get_param( 'per_page' ) ) : 10;
+        $search = $request->get_param( 'search' );
+        
         $args = array(
             'post_type'      => 'questbook_contact',
-            'posts_per_page' => -1,
+            'paged'          => $page,
+            'posts_per_page' => $per_page,
+            'post_status'    => 'publish',
         );
 
-        $contacts = get_posts( $args );
+        if ( ! empty( $search ) ) {
+            $args['s'] = sanitize_text_field( $search );
+            // Note: Native 's' searches post_title and post_content.
+            // A more robust search might hook into posts_where to search meta,
+            // but this covers basic name searches for now.
+        }
+
+        $query = new WP_Query( $args );
         $formatted_contacts = array();
 
-        foreach ( $contacts as $contact ) {
+        foreach ( $query->posts as $contact ) {
             $formatted_contacts[] = $this->format_contact( $contact );
         }
 
-        return rest_ensure_response( $formatted_contacts );
+        $response = new WP_REST_Response( $formatted_contacts );
+        $response->header( 'X-WP-Total', $query->found_posts );
+        $response->header( 'X-WP-TotalPages', $query->max_num_pages );
+
+        return $response;
     }
 
     public function get_contact( WP_REST_Request $request ) {
@@ -211,8 +349,11 @@ class Xophz_Compass_Quests_REST {
 
         $post_data = array(
             'ID'           => $id,
-            'post_title'   => sanitize_text_field( $params['name'] ),
         );
+        
+        if ( isset( $params['name'] ) ) {
+            $post_data['post_title'] = sanitize_text_field( $params['name'] );
+        }
 
         $post_id = wp_update_post( $post_data );
 
@@ -221,6 +362,10 @@ class Xophz_Compass_Quests_REST {
         }
 
         $this->update_contact_meta( $post_id, $params );
+
+        if ( isset( $params['board_stages'] ) && is_array( $params['board_stages'] ) ) {
+            update_post_meta( $post_id, '_qb_board_stages', wp_json_encode( $params['board_stages'] ) );
+        }
 
         return $this->get_contact( new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $post_id ) );
     }
@@ -309,15 +454,19 @@ class Xophz_Compass_Quests_REST {
             }
         }
 
+        $board_stages_json = get_post_meta( $contact->ID, '_qb_board_stages', true );
+        $board_stages = empty( $board_stages_json ) ? array() : json_decode( $board_stages_json, true );
+
         return array(
-            'id'          => $contact->ID,
-            'user_id'     => $user_id,
-            'name'        => $name,
-            'email'       => $email,
-            'phone'       => get_post_meta( $contact->ID, '_qb_phone', true ),
-            'lead_status' => get_post_meta( $contact->ID, '_qb_lead_status', true ),
-            'source'      => get_post_meta( $contact->ID, '_qb_source', true ),
-            'created_at'  => $contact->post_date,
+            'id'           => $contact->ID,
+            'user_id'      => $user_id,
+            'name'         => $name,
+            'email'        => $email,
+            'phone'        => get_post_meta( $contact->ID, '_qb_phone', true ),
+            'lead_status'  => get_post_meta( $contact->ID, '_qb_lead_status', true ),
+            'source'       => get_post_meta( $contact->ID, '_qb_source', true ),
+            'board_stages' => $board_stages,
+            'created_at'   => $contact->post_date,
         );
     }
 
@@ -337,6 +486,73 @@ class Xophz_Compass_Quests_REST {
         if ( isset( $params['source'] ) ) {
             update_post_meta( $post_id, '_qb_source', sanitize_text_field( $params['source'] ) );
         }
+    }
+
+    // --- Boards CRUD --- //
+    public function get_boards( WP_REST_Request $request ) {
+        $boards = get_posts( array(
+            'post_type'      => 'questbook_board',
+            'posts_per_page' => -1,
+            'post_status'    => 'publish'
+        ) );
+
+        $formatted = array();
+        foreach ( $boards as $board ) {
+            $stages_json = get_post_meta( $board->ID, '_qb_stages', true );
+            $stages = empty( $stages_json ) ? array() : json_decode( $stages_json, true );
+            $formatted[] = array(
+                'id'     => $board->ID,
+                'title'  => $board->post_title,
+                'stages' => $stages
+            );
+        }
+        return rest_ensure_response( $formatted );
+    }
+
+    public function create_board( WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+        $title = isset( $params['title'] ) ? sanitize_text_field( $params['title'] ) : 'New Board';
+        $stages = isset( $params['stages'] ) ? $params['stages'] : array();
+
+        $board_id = wp_insert_post( array(
+            'post_title'  => $title,
+            'post_type'   => 'questbook_board',
+            'post_status' => 'publish'
+        ) );
+
+        if ( is_wp_error( $board_id ) ) return $board_id;
+
+        update_post_meta( $board_id, '_qb_stages', wp_json_encode( $stages ) );
+
+        return rest_ensure_response( array(
+            'id'     => $board_id,
+            'title'  => $title,
+            'stages' => $stages
+        ) );
+    }
+
+    public function update_board( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $params = $request->get_json_params();
+
+        if ( isset( $params['title'] ) ) {
+            wp_update_post( array(
+                'ID'         => $id,
+                'post_title' => sanitize_text_field( $params['title'] )
+            ) );
+        }
+
+        if ( isset( $params['stages'] ) ) {
+            update_post_meta( $id, '_qb_stages', wp_json_encode( $params['stages'] ) );
+        }
+
+        return rest_ensure_response( array( 'success' => true ) );
+    }
+
+    public function delete_board( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        wp_delete_post( $id, true );
+        return rest_ensure_response( array( 'deleted' => true ) );
     }
 
     public function get_contact_entries( WP_REST_Request $request ) {
@@ -414,6 +630,136 @@ class Xophz_Compass_Quests_REST {
         return rest_ensure_response( array( 'success' => true, 'message' => 'Entry rejected and removed.' ) );
     }
 
+    public function create_wp_user_from_contact( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $contact = get_post( $id );
+        if ( ! $contact || $contact->post_type !== 'questbook_contact' ) {
+            return new WP_Error( 'not_found', 'Contact not found', array( 'status' => 404 ) );
+        }
+        
+        $email = get_post_meta( $id, '_qb_raw_email', true );
+        $name = $contact->post_title;
+        
+        if ( empty( $email ) ) {
+            return new WP_Error( 'missing_email', 'Contact must have an email to create a WP User', array( 'status' => 400 ) );
+        }
+        
+        if ( email_exists( $email ) ) {
+            $user_id = get_user_by( 'email', $email )->ID;
+            update_post_meta( $id, '_qb_user_id', $user_id );
+            return rest_ensure_response( array( 'success' => true, 'user_id' => $user_id, 'message' => 'User already existed, linked to contact.' ) );
+        }
+        
+        $username = sanitize_user( current( explode( '@', $email ) ), true );
+        if ( username_exists( $username ) ) {
+            $username = $username . '_' . wp_rand( 1000, 9999 );
+        }
+        
+        $random_password = wp_generate_password( 12, false );
+        $user_id = wp_create_user( $username, $random_password, $email );
+        
+        if ( is_wp_error( $user_id ) ) {
+            return $user_id;
+        }
+        
+        $name_parts = explode( ' ', $name, 2 );
+        $first_name = $name_parts[0];
+        $last_name = isset( $name_parts[1] ) ? $name_parts[1] : '';
+        
+        wp_update_user( array(
+            'ID' => $user_id,
+            'first_name' => $first_name,
+            'last_name' => $last_name,
+            'display_name' => $name
+        ) );
+        
+        update_post_meta( $id, '_qb_user_id', $user_id );
+        
+        // Send WP welcome email with password reset link
+        $key = get_password_reset_key( get_userdata( $user_id ) );
+        if ( ! is_wp_error( $key ) ) {
+            $reset_link = network_site_url("wp-login.php?action=rp&key=$key&login=" . rawurlencode($username), 'login');
+            $subject = 'Welcome! Please set your password';
+            $message = "Hi $first_name,\n\n";
+            $message .= "Your account has been created. Please click the link below to set your password and access your dashboard:\n\n";
+            $message .= $reset_link . "\n\n";
+            $message .= "Welcome aboard!";
+            wp_mail( $email, $subject, $message );
+        }
+        
+        return rest_ensure_response( array( 'success' => true, 'user_id' => $user_id ) );
+    }
+
+    public function link_inbox_submission( WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+        $entry_id = isset( $params['entry_id'] ) ? absint( $params['entry_id'] ) : 0;
+        $contact_id = isset( $params['contact_id'] ) ? absint( $params['contact_id'] ) : 0;
+        
+        if ( ! $entry_id || ! $contact_id ) {
+            return new WP_Error( 'missing_data', 'Missing entry_id or contact_id', array( 'status' => 400 ) );
+        }
+        
+        add_post_meta( $contact_id, '_qb_forminator_entry', $entry_id );
+        
+        return rest_ensure_response( array( 'success' => true, 'contact_id' => $contact_id ) );
+    }
+
+    public function create_contact_from_submission( WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+        $entry_id = isset( $params['entry_id'] ) ? absint( $params['entry_id'] ) : 0;
+        $create_user = isset( $params['create_user'] ) ? (bool) $params['create_user'] : false;
+        
+        if ( ! $entry_id ) {
+            return new WP_Error( 'missing_data', 'Missing entry_id', array( 'status' => 400 ) );
+        }
+        
+        if ( ! class_exists( 'Forminator_Form_Entry_Model' ) ) {
+            return new WP_Error( 'no_forminator', 'Forminator API not available', array( 'status' => 500 ) );
+        }
+        
+        $entry = new Forminator_Form_Entry_Model( $entry_id );
+        if ( ! $entry || ! isset( $entry->entry_id ) ) {
+            return new WP_Error( 'not_found', 'Entry not found', array( 'status' => 404 ) );
+        }
+        
+        $email = '';
+        $name = 'New Lead';
+        $phone = '';
+        
+        foreach ( $entry->meta_data as $meta_key => $meta ) {
+            $meta_name = isset( $meta['name'] ) ? $meta['name'] : $meta_key;
+            $meta_val  = isset( $meta['value'] ) ? $meta['value'] : '';
+            if ( is_array( $meta_val ) ) {
+                $meta_val = implode( ', ', $meta_val );
+            }
+            if ( strpos( $meta_name, 'email' ) !== false && empty( $email ) ) $email = $meta_val;
+            if ( strpos( $meta_name, 'name' ) !== false && $name === 'New Lead' ) $name = $meta_val;
+            if ( strpos( $meta_name, 'phone' ) !== false && empty( $phone ) ) $phone = $meta_val;
+        }
+        
+        $post_id = wp_insert_post( array(
+            'post_title'  => sanitize_text_field( $name ),
+            'post_type'   => 'questbook_contact',
+            'post_status' => 'publish',
+        ) );
+        
+        if ( is_wp_error( $post_id ) ) return $post_id;
+        
+        if ( ! empty( $email ) ) update_post_meta( $post_id, '_qb_raw_email', sanitize_email( $email ) );
+        if ( ! empty( $phone ) ) update_post_meta( $post_id, '_qb_phone', sanitize_text_field( $phone ) );
+        update_post_meta( $post_id, '_qb_lead_status', 'New Lead' );
+        update_post_meta( $post_id, '_qb_source', 'Forminator Form #' . $entry->form_id );
+        add_post_meta( $post_id, '_qb_forminator_entry', $entry_id );
+        
+        if ( $create_user && ! empty( $email ) ) {
+            $req = new WP_REST_Request( 'POST' );
+            $req->set_param( 'id', $post_id );
+            $this->create_wp_user_from_contact( $req );
+        }
+        
+        return rest_ensure_response( array( 'success' => true, 'contact_id' => $post_id ) );
+    }
+
     public function get_contact_logs( WP_REST_Request $request ) {
         $id = $request->get_param( 'id' );
         
@@ -484,28 +830,18 @@ class Xophz_Compass_Quests_REST {
         
         if ( $type === 'sms' && $internal === 'no' ) {
             $to_phone = get_post_meta( $id, '_qb_phone', true );
-            $sid = get_option( 'qb_twilio_account_sid' );
-            $token = get_option( 'qb_twilio_auth_token' );
-            $from_num = get_option( 'qb_twilio_phone_number' );
 
-            if ( $to_phone && $sid && $token && $from_num ) {
-                $twilio_url = "https://api.twilio.com/2010-04-01/Accounts/$sid/Messages.json";
-                $args = array(
-                    'headers' => array(
-                        'Authorization' => 'Basic ' . base64_encode( "$sid:$token" )
-                    ),
-                    'body' => array(
-                        'To'   => $to_phone,
-                        'From' => $from_num,
-                        'Body' => $content
-                    )
-                );
-                $response = wp_remote_post( $twilio_url, $args );
-                if ( is_wp_error( $response ) ) {
-                    error_log( 'Questbook Twilio Error: ' . $response->get_error_message() );
+            if ( $to_phone ) {
+                if ( class_exists( 'Xophz_Compass_Twilio_API' ) ) {
+                    $response = Xophz_Compass_Twilio_API::send_sms( $to_phone, $content );
+                    if ( is_wp_error( $response ) ) {
+                        error_log( 'Questbook Twilio Error: ' . $response->get_error_message() );
+                    }
+                } else {
+                    error_log('Questbook Twilio Error: Xophz_Compass_Twilio_API not found.');
                 }
             } else {
-                error_log('Questbook Twilio Error: Missing API keys or Contact Phone Number.');
+                error_log('Questbook Twilio Error: Missing Contact Phone Number.');
             }
         } elseif ( $type === 'email' && $internal === 'no' ) {
             $to_email = get_post_meta( $id, '_qb_raw_email', true );
@@ -618,13 +954,11 @@ class Xophz_Compass_Quests_REST {
 
     public function get_settings( WP_REST_Request $request ) {
         $settings = array(
-            'twilio_account_sid'   => get_option( 'qb_twilio_account_sid', '' ),
-            'twilio_auth_token'    => get_option( 'qb_twilio_auth_token', '' ),
-            'twilio_phone_number'  => get_option( 'qb_twilio_phone_number', '' ),
             'templates'            => get_option( 'qb_communication_templates', array(
                 array( 'title' => 'Welcome Message', 'content' => 'Hi {{contact.name}}, thanks for reaching out!' ),
                 array( 'title' => 'Follow Up', 'content' => 'Just checking in on our previous conversation.' ),
-            ) )
+            ) ),
+            'lead_stages'          => get_option( 'qb_lead_stages', array( 'New', 'Contacted', 'Qualified', 'Won', 'Lost' ) )
         );
         return rest_ensure_response( $settings );
     }
@@ -632,15 +966,6 @@ class Xophz_Compass_Quests_REST {
     public function update_settings( WP_REST_Request $request ) {
         $params = $request->get_json_params();
         
-        if ( isset( $params['twilio_account_sid'] ) ) {
-            update_option( 'qb_twilio_account_sid', sanitize_text_field( $params['twilio_account_sid'] ) );
-        }
-        if ( isset( $params['twilio_auth_token'] ) ) {
-            update_option( 'qb_twilio_auth_token', sanitize_text_field( $params['twilio_auth_token'] ) );
-        }
-        if ( isset( $params['twilio_phone_number'] ) ) {
-            update_option( 'qb_twilio_phone_number', sanitize_text_field( $params['twilio_phone_number'] ) );
-        }
         if ( isset( $params['templates'] ) && is_array( $params['templates'] ) ) {
             $clean_templates = array();
             foreach( $params['templates'] as $t ) {
@@ -650,6 +975,11 @@ class Xophz_Compass_Quests_REST {
                 );
             }
             update_option( 'qb_communication_templates', $clean_templates );
+        }
+
+        if ( isset( $params['lead_stages'] ) && is_array( $params['lead_stages'] ) ) {
+            $clean_stages = array_map( 'sanitize_text_field', $params['lead_stages'] );
+            update_option( 'qb_lead_stages', $clean_stages );
         }
         
         return rest_ensure_response( array( 'success' => true ) );
@@ -766,7 +1096,19 @@ class Xophz_Compass_Quests_REST {
                     }
                     
                     $contact_id = 0;
-                    if ( $email !== 'Unknown' ) {
+                    
+                    // First check if explicitly linked via meta
+                    $args = array(
+                        'post_type'  => 'questbook_contact',
+                        'meta_key'   => '_qb_forminator_entry',
+                        'meta_value' => $entry->entry_id,
+                        'fields'     => 'ids',
+                        'numberposts' => 1
+                    );
+                    $matched_by_entry = get_posts($args);
+                    if ( ! empty($matched_by_entry) ) {
+                        $contact_id = $matched_by_entry[0];
+                    } else if ( $email !== 'Unknown' ) {
                         // First check _qb_raw_email
                         $args = array(
                             'post_type'  => 'questbook_contact',
@@ -851,5 +1193,357 @@ class Xophz_Compass_Quests_REST {
         }
 
         return rest_ensure_response( array( 'success' => true, 'marked' => count($unread_logs) ) );
+    }
+
+    // --- Calendar Events ---
+
+    public function get_events( WP_REST_Request $request ) {
+        $args = array(
+            'post_type'      => 'questbook_event',
+            'posts_per_page' => -1,
+        );
+
+        $contact_id = $request->get_param( 'contact_id' );
+        if ( ! empty( $contact_id ) ) {
+            $args['meta_query'] = array(
+                array(
+                    'key'     => '_qb_contact_id',
+                    'value'   => $contact_id,
+                    'compare' => '='
+                )
+            );
+        }
+
+        $events = get_posts( $args );
+        $formatted = array();
+
+        foreach ( $events as $event ) {
+            $formatted[] = array(
+                'id'          => (string) $event->ID,
+                'title'       => $event->post_title,
+                'date'        => get_post_meta( $event->ID, '_qb_event_date', true ),
+                'time'        => get_post_meta( $event->ID, '_qb_event_time', true ),
+                'description' => get_post_meta( $event->ID, '_qb_event_desc', true ),
+                'type'        => get_post_meta( $event->ID, '_qb_event_type', true ),
+                'contact_id'  => get_post_meta( $event->ID, '_qb_contact_id', true ),
+            );
+        }
+
+        return rest_ensure_response( $formatted );
+    }
+
+    public function create_event( WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+
+        $post_data = array(
+            'post_title'  => sanitize_text_field( $params['title'] ),
+            'post_type'   => 'questbook_event',
+            'post_status' => 'publish',
+        );
+
+        $post_id = wp_insert_post( $post_data );
+
+        if ( is_wp_error( $post_id ) ) {
+            return $post_id;
+        }
+
+        $this->update_event_meta( $post_id, $params );
+
+        return rest_ensure_response( array( 'success' => true, 'id' => (string) $post_id ) );
+    }
+
+    public function update_event( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $params = $request->get_json_params();
+
+        if ( isset( $params['title'] ) ) {
+            wp_update_post( array(
+                'ID'         => $id,
+                'post_title' => sanitize_text_field( $params['title'] ),
+            ) );
+        }
+
+        $this->update_event_meta( $id, $params );
+
+        return rest_ensure_response( array( 'success' => true ) );
+    }
+
+    public function delete_event( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        wp_delete_post( $id, true );
+        return rest_ensure_response( array( 'deleted' => true ) );
+    }
+
+    private function update_event_meta( $post_id, $params ) {
+        if ( isset( $params['date'] ) ) {
+            update_post_meta( $post_id, '_qb_event_date', sanitize_text_field( $params['date'] ) );
+        }
+        if ( isset( $params['time'] ) ) {
+            update_post_meta( $post_id, '_qb_event_time', sanitize_text_field( $params['time'] ) );
+        }
+        if ( isset( $params['description'] ) ) {
+            update_post_meta( $post_id, '_qb_event_desc', sanitize_textarea_field( $params['description'] ) );
+        }
+        if ( isset( $params['type'] ) ) {
+            update_post_meta( $post_id, '_qb_event_type', sanitize_text_field( $params['type'] ) );
+        }
+        if ( isset( $params['contact_id'] ) ) {
+            update_post_meta( $post_id, '_qb_contact_id', absint( $params['contact_id'] ) );
+        }
+    }
+
+    // --- Quests CRUD --- //
+    public function get_quests( WP_REST_Request $request ) {
+        $registered_cpts = get_option( 'xophz_compass_registered_cpts', array() );
+        $quest_cpts = array( 'questbook_quest' ); 
+        
+        $cpt_map = array(); 
+        foreach ( $registered_cpts as $schema ) {
+            if ( ! empty( $schema['is_quest_type'] ) ) {
+                $quest_cpts[] = $schema['slug'];
+                $cpt_map[ $schema['slug'] ] = array(
+                    'icon'       => isset( $schema['icon'] ) ? $schema['icon'] : 'dashicons-admin-post',
+                    'type_label' => isset( $schema['singular_label'] ) ? $schema['singular_label'] : $schema['slug']
+                );
+            }
+        }
+
+        $quests = get_posts( array(
+            'post_type'      => $quest_cpts,
+            'posts_per_page' => -1,
+            'post_status'    => 'publish'
+        ) );
+
+        $formatted = array();
+        foreach ( $quests as $quest ) {
+            $tasks_json = get_post_meta( $quest->ID, '_qb_quest_tasks', true );
+            $tasks = empty( $tasks_json ) ? array() : json_decode( $tasks_json, true );
+            
+            $schema_data = isset( $cpt_map[ $quest->post_type ] ) ? $cpt_map[ $quest->post_type ] : array( 'icon' => 'dashicons-location-alt', 'type_label' => 'Quest' );
+            
+            $formatted[] = array(
+                'id'          => $quest->ID,
+                'title'       => $quest->post_title,
+                'description' => $quest->post_content,
+                'type'        => $quest->post_type,
+                'type_label'  => $schema_data['type_label'],
+                'icon'        => str_replace( 'dashicons-', 'fas fa-', $schema_data['icon'] ),
+                'tasks'       => $tasks,
+                'rewards'     => array(
+                    'xp' => absint( get_post_meta( $quest->ID, '_qb_reward_xp', true ) ),
+                    'ap' => absint( get_post_meta( $quest->ID, '_qb_reward_ap', true ) ),
+                    'gp' => absint( get_post_meta( $quest->ID, '_qb_reward_gp', true ) ),
+                )
+            );
+        }
+        return rest_ensure_response( $formatted );
+    }
+
+    public function create_quest( WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+        $title = isset( $params['title'] ) ? sanitize_text_field( $params['title'] ) : 'New Quest';
+        $desc = isset( $params['description'] ) ? wp_kses_post( $params['description'] ) : '';
+        $tasks = isset( $params['tasks'] ) && is_array( $params['tasks'] ) ? $params['tasks'] : array();
+        $post_type = isset( $params['post_type'] ) ? sanitize_text_field( $params['post_type'] ) : 'questbook_quest';
+
+        $registered_cpts = get_option( 'xophz_compass_registered_cpts', array() );
+        $valid_cpts = array( 'questbook_quest' );
+        foreach ( $registered_cpts as $schema ) {
+            if ( ! empty( $schema['is_quest_type'] ) ) {
+                $valid_cpts[] = $schema['slug'];
+            }
+        }
+        
+        if ( ! in_array( $post_type, $valid_cpts, true ) ) {
+            return new WP_Error( 'invalid_type', 'Invalid Quest Type', array('status'=>400) );
+        }
+
+        $quest_id = wp_insert_post( array(
+            'post_title'   => $title,
+            'post_content' => $desc,
+            'post_type'    => $post_type,
+            'post_status'  => 'publish'
+        ) );
+
+        if ( is_wp_error( $quest_id ) ) return $quest_id;
+
+        update_post_meta( $quest_id, '_qb_quest_tasks', wp_json_encode( $tasks ) );
+        if ( isset( $params['rewards'] ) ) {
+            update_post_meta( $quest_id, '_qb_reward_xp', absint( $params['rewards']['xp'] ?? 0 ) );
+            update_post_meta( $quest_id, '_qb_reward_ap', absint( $params['rewards']['ap'] ?? 0 ) );
+            update_post_meta( $quest_id, '_qb_reward_gp', absint( $params['rewards']['gp'] ?? 0 ) );
+        }
+
+        return rest_ensure_response( array( 'id' => $quest_id ) );
+    }
+
+    public function update_quest( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        $params = $request->get_json_params();
+
+        $post_data = array( 'ID' => $id );
+        if ( isset( $params['title'] ) ) $post_data['post_title'] = sanitize_text_field( $params['title'] );
+        if ( isset( $params['description'] ) ) $post_data['post_content'] = wp_kses_post( $params['description'] );
+        
+        if ( count( $post_data ) > 1 ) {
+            wp_update_post( $post_data );
+        }
+
+        if ( isset( $params['tasks'] ) && is_array( $params['tasks'] ) ) {
+            update_post_meta( $id, '_qb_quest_tasks', wp_json_encode( $params['tasks'] ) );
+        }
+        if ( isset( $params['rewards'] ) ) {
+            update_post_meta( $id, '_qb_reward_xp', absint( $params['rewards']['xp'] ?? 0 ) );
+            update_post_meta( $id, '_qb_reward_ap', absint( $params['rewards']['ap'] ?? 0 ) );
+            update_post_meta( $id, '_qb_reward_gp', absint( $params['rewards']['gp'] ?? 0 ) );
+        }
+
+        return rest_ensure_response( array( 'success' => true ) );
+    }
+
+    public function delete_quest( WP_REST_Request $request ) {
+        $id = $request->get_param( 'id' );
+        wp_delete_post( $id, true );
+        return rest_ensure_response( array( 'deleted' => true ) );
+    }
+
+    // --- Contact Quests (Active Quests) --- //
+    public function get_contact_quests( WP_REST_Request $request ) {
+        $contact_id = $request->get_param( 'id' );
+        $active_quests_json = get_post_meta( $contact_id, '_qb_active_quests', true );
+        $active_quests = empty( $active_quests_json ) ? array() : json_decode( $active_quests_json, true );
+        
+        $registered_cpts = get_option( 'xophz_compass_registered_cpts', array() );
+        $cpt_map = array(); 
+        foreach ( $registered_cpts as $schema ) {
+            if ( ! empty( $schema['is_quest_type'] ) ) {
+                $cpt_map[ $schema['slug'] ] = array(
+                    'icon'       => isset( $schema['icon'] ) ? $schema['icon'] : 'dashicons-admin-post',
+                    'type_label' => isset( $schema['singular_label'] ) ? $schema['singular_label'] : $schema['slug']
+                );
+            }
+        }
+
+        foreach ( $active_quests as &$aq ) {
+            $quest_post = get_post( $aq['quest_id'] );
+            if ( $quest_post ) {
+                $aq['type'] = $quest_post->post_type;
+                $schema_data = isset( $cpt_map[ $quest_post->post_type ] ) ? $cpt_map[ $quest_post->post_type ] : array( 'icon' => 'dashicons-location-alt', 'type_label' => 'Quest' );
+                $aq['icon'] = str_replace( 'dashicons-', 'fas fa-', $schema_data['icon'] );
+                $aq['type_label'] = $schema_data['type_label'];
+            } else {
+                $aq['type'] = 'unknown';
+                $aq['icon'] = 'fas fa-question';
+                $aq['type_label'] = 'Unknown';
+            }
+        }
+        
+        return rest_ensure_response( $active_quests );
+    }
+
+    public function assign_quest_to_contact( WP_REST_Request $request ) {
+        $contact_id = $request->get_param( 'id' );
+        $params = $request->get_json_params();
+        $quest_id = isset( $params['quest_id'] ) ? absint( $params['quest_id'] ) : 0;
+
+        if ( ! $quest_id ) return new WP_Error( 'invalid_quest', 'Quest ID missing', array('status'=>400) );
+
+        $quest = get_post( $quest_id );
+        
+        $registered_cpts = get_option( 'xophz_compass_registered_cpts', array() );
+        $valid_cpts = array( 'questbook_quest' );
+        foreach ( $registered_cpts as $schema ) {
+            if ( ! empty( $schema['is_quest_type'] ) ) {
+                $valid_cpts[] = $schema['slug'];
+            }
+        }
+
+        if ( ! $quest || ! in_array( $quest->post_type, $valid_cpts, true ) ) {
+            return new WP_Error( 'invalid_quest', 'Quest not found', array('status'=>404) );
+        }
+
+        $active_quests_json = get_post_meta( $contact_id, '_qb_active_quests', true );
+        $active_quests = empty( $active_quests_json ) ? array() : json_decode( $active_quests_json, true );
+
+        // Avoid duplicates
+        foreach( $active_quests as $aq ) {
+            if ( $aq['quest_id'] == $quest_id && empty( $aq['completed'] ) ) {
+                return new WP_Error( 'already_assigned', 'Quest already assigned and active', array('status'=>400) );
+            }
+        }
+
+        // Initialize state
+        $tasks_json = get_post_meta( $quest_id, '_qb_quest_tasks', true );
+        $tasks = empty( $tasks_json ) ? array() : json_decode( $tasks_json, true );
+        
+        $state_tasks = array();
+        foreach( $tasks as $task ) {
+            $state_tasks[] = array(
+                'id' => isset($task['id']) ? $task['id'] : uniqid(),
+                'title' => isset($task['title']) ? $task['title'] : 'Task',
+                'completed' => false
+            );
+        }
+
+        $new_assignment = array(
+            'quest_id' => $quest_id,
+            'title' => $quest->post_title,
+            'assigned_at' => current_time('mysql'),
+            'completed' => false,
+            'tasks' => $state_tasks
+        );
+
+        $active_quests[] = $new_assignment;
+        update_post_meta( $contact_id, '_qb_active_quests', wp_json_encode( $active_quests ) );
+
+        return rest_ensure_response( $new_assignment );
+    }
+
+    public function update_contact_quest( WP_REST_Request $request ) {
+        $contact_id = $request->get_param( 'id' );
+        $quest_id = $request->get_param( 'quest_id' );
+        $params = $request->get_json_params();
+
+        $active_quests_json = get_post_meta( $contact_id, '_qb_active_quests', true );
+        $active_quests = empty( $active_quests_json ) ? array() : json_decode( $active_quests_json, true );
+
+        $found_index = -1;
+        // Find the most recent active one if multiple
+        for ( $i = count($active_quests) - 1; $i >= 0; $i-- ) {
+            if ( $active_quests[$i]['quest_id'] == $quest_id ) {
+                $found_index = $i;
+                if ( empty( $active_quests[$i]['completed'] ) ) break;
+            }
+        }
+
+        if ( $found_index === -1 ) {
+            return new WP_Error( 'not_assigned', 'Quest not assigned to contact', array('status'=>404) );
+        }
+
+        if ( isset( $params['tasks'] ) ) {
+            $active_quests[$found_index]['tasks'] = $params['tasks'];
+            
+            // Check if all completed
+            $all_completed = true;
+            foreach( $params['tasks'] as $t ) {
+                if ( empty( $t['completed'] ) ) {
+                    $all_completed = false;
+                    break;
+                }
+            }
+
+            if ( $all_completed && empty( $active_quests[$found_index]['completed'] ) ) {
+                $active_quests[$found_index]['completed'] = true;
+                $active_quests[$found_index]['completed_at'] = current_time('mysql');
+                
+                // --- XP Integration Trigger ---
+                $wp_user_id = get_post_meta( $contact_id, '_qb_user_id', true );
+                do_action( 'questbook_quest_completed', $contact_id, $quest_id, $wp_user_id );
+            }
+        }
+
+        update_post_meta( $contact_id, '_qb_active_quests', wp_json_encode( $active_quests ) );
+
+        return rest_ensure_response( $active_quests[$found_index] );
     }
 }

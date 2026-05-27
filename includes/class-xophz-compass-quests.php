@@ -185,6 +185,10 @@ class Xophz_Compass_Quests {
 
 		// Autopilot Workflow Hook
 		$this->loader->add_action( 'save_post_questbook_log', $plugin_cpt, 'handle_workflow_triggers', 10, 3 );
+        
+        // Gamification / XP Hook
+		$this->loader->add_action( 'questbook_quest_completed', $plugin_cpt, 'handle_quest_completion', 10, 3 );
+        $this->loader->add_action( 'xophz_compass_goal_won', $plugin_cpt, 'handle_goal_won', 10, 3 );
 	}
 
 	/**

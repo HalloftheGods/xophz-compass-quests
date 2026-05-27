@@ -134,6 +134,50 @@ class Xophz_Compass_Quests_CPT {
 		);
 
 		register_post_type( 'questbook_log', $log_args );
+
+		// 4. Register Event CPT (Scheduler)
+		$event_labels = array(
+			'name'               => _x( 'Events', 'post type general name', 'xophz-compass-quests' ),
+			'singular_name'      => _x( 'Event', 'post type singular name', 'xophz-compass-quests' )
+		);
+
+		$event_args = array(
+			'labels'             => $event_labels,
+			'description'        => __( 'Questbook Calendar Events.', 'xophz-compass-quests' ),
+			'public'             => false,
+			'publicly_queryable' => false,
+			'show_ui'            => false,
+			'show_in_menu'       => false,
+			'query_var'          => false,
+			'capability_type'    => 'post',
+			'has_archive'        => false,
+			'hierarchical'       => false,
+			'supports'           => array( 'title' )
+		);
+
+		register_post_type( 'questbook_event', $event_args );
+
+		// 5. Register Board CPT (Pipeline)
+		$board_labels = array(
+			'name'               => _x( 'Boards', 'post type general name', 'xophz-compass-quests' ),
+			'singular_name'      => _x( 'Board', 'post type singular name', 'xophz-compass-quests' )
+		);
+
+		$board_args = array(
+			'labels'             => $board_labels,
+			'description'        => __( 'Questbook Pipeline Boards.', 'xophz-compass-quests' ),
+			'public'             => false,
+			'publicly_queryable' => false,
+			'show_ui'            => false,
+			'show_in_menu'       => false,
+			'query_var'          => false,
+			'capability_type'    => 'post',
+			'has_archive'        => false,
+			'hierarchical'       => false,
+			'supports'           => array( 'title' )
+		);
+
+		register_post_type( 'questbook_board', $board_args );
 	}
 
 	/**
@@ -154,6 +198,126 @@ class Xophz_Compass_Quests_CPT {
 				update_post_meta( $contact_id, '_qb_lead_status', 'Contacted' );
 				// TODO: Fire Magic Cloak notification to the assigned agent
 			}
+		}
+	}
+
+	/**
+	 * Hook triggered when a Contact completes a Quest
+	 * Grants XP/AP/GP to the linked WordPress user account
+	 */
+	public function handle_quest_completion( $contact_id, $quest_id, $wp_user_id ) {
+		if ( ! $wp_user_id ) {
+			return; // No linked WP user, no XP granted
+		}
+
+		$xp_reward = absint( get_post_meta( $quest_id, '_qb_reward_xp', true ) );
+		$ap_reward = absint( get_post_meta( $quest_id, '_qb_reward_ap', true ) );
+		$gp_reward = absint( get_post_meta( $quest_id, '_qb_reward_gp', true ) );
+
+		if ( $xp_reward > 0 ) {
+			$current_xp = (int) get_user_meta( $wp_user_id, '_xp_total_xp', true );
+			update_user_meta( $wp_user_id, '_xp_total_xp', $current_xp + $xp_reward );
+		}
+
+		if ( $ap_reward > 0 ) {
+			$current_ap = (int) get_user_meta( $wp_user_id, '_xp_total_ap', true );
+			update_user_meta( $wp_user_id, '_xp_total_ap', $current_ap + $ap_reward );
+		}
+
+		if ( $gp_reward > 0 ) {
+			$current_gp = (int) get_user_meta( $wp_user_id, '_xp_total_gp', true );
+			update_user_meta( $wp_user_id, '_xp_total_gp', $current_gp + $gp_reward );
+		}
+		
+		// If xp_log is registered, record it in the XP Action Log
+		if ( post_type_exists( 'xp_log' ) ) {
+			
+			$contact_name = get_the_title( $contact_id );
+			$quest_name = get_the_title( $quest_id );
+
+			$payload = array(
+				'type'         => 'quest_completed',
+				'quest_id'     => $quest_id,
+				'quest_title'  => $quest_name,
+				'contact_id'   => $contact_id,
+				'contact_name' => $contact_name,
+				'rewards' => array(
+					'xp' => $xp_reward,
+					'ap' => $ap_reward,
+					'gp' => $gp_reward,
+				),
+				'date'         => current_time('mysql'),
+			);
+
+			// Provide a gamification identifier string
+			$metric_key = 'questbook_quest_completed';
+
+			// Call the xp_log recording hook
+			do_action( 'xophz_compass_record_action', $metric_key, $wp_user_id, $payload );
+		}
+	}
+
+	/**
+	 * Hook triggered when a Gamification Goal is won.
+	 * Checks if the user has any active Quests that require this Goal, and auto-completes them.
+	 */
+	public function handle_goal_won( $wp_user_id, $goal_id, $goal_title ) {
+		if ( ! $wp_user_id ) return;
+
+		// 1. Find the Contact associated with this WP User
+		$contacts = get_posts( array(
+			'post_type' => 'questbook_contact',
+			'meta_key' => '_qb_user_id',
+			'meta_value' => $wp_user_id,
+			'posts_per_page' => 1
+		) );
+
+		if ( empty( $contacts ) ) return;
+		$contact_id = $contacts[0]->ID;
+
+		// 2. Fetch their active quests
+		$active_quests_json = get_post_meta( $contact_id, '_qb_active_quests', true );
+		$active_quests = empty( $active_quests_json ) ? array() : json_decode( $active_quests_json, true );
+		if ( empty( $active_quests ) ) return;
+
+		$quests_updated = false;
+
+		// 3. Scan Quests for tasks tied to this goal
+		foreach ( $active_quests as &$quest_data ) {
+			if ( ! empty( $quest_data['completed'] ) ) continue; // Skip already finished quests
+
+			$tasks = $quest_data['tasks'] ?? [];
+			$all_completed = true;
+			$task_updated = false;
+
+			foreach ( $tasks as &$task ) {
+				if ( empty( $task['completed'] ) ) {
+					// Is this task tied to the Goal that was just won?
+					if ( isset( $task['goal_id'] ) && (int) $task['goal_id'] === (int) $goal_id ) {
+						$task['completed'] = true;
+						$task_updated = true;
+						$quests_updated = true;
+					} else {
+						$all_completed = false; // Still missing at least one task
+					}
+				}
+			}
+
+			// If we updated a task, and all tasks are now complete, mark quest complete
+			if ( $task_updated ) {
+				$quest_data['tasks'] = $tasks;
+				if ( $all_completed ) {
+					$quest_data['completed'] = true;
+					$quest_data['completed_at'] = current_time('mysql');
+					// Trigger Quest Completion Hook!
+					do_action( 'questbook_quest_completed', $contact_id, $quest_data['quest_id'], $wp_user_id );
+				}
+			}
+		}
+
+		// 4. Save updates if any auto-completions occurred
+		if ( $quests_updated ) {
+			update_post_meta( $contact_id, '_qb_active_quests', wp_json_encode( $active_quests ) );
 		}
 	}
 }
