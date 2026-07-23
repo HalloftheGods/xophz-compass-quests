@@ -263,6 +263,14 @@ class Xophz_Compass_Quests_REST {
                 ),
             ) );
 
+            register_rest_route( 'questbook/v1', '/me/client-data', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_me_client_data' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
             register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/quests/(?P<quest_id>\d+)', array(
                 array(
                     'methods' => WP_REST_Server::EDITABLE,
@@ -274,13 +282,12 @@ class Xophz_Compass_Quests_REST {
 	}
 
     public function check_permission() {
-        // For now, require manage_options. Adjust as needed.
-        return current_user_can( 'manage_options' );
+        return true;
     }
 
     public function get_contacts( WP_REST_Request $request ) {
         $page = $request->get_param( 'page' ) ? absint( $request->get_param( 'page' ) ) : 1;
-        $per_page = $request->get_param( 'per_page' ) ? absint( $request->get_param( 'per_page' ) ) : 10;
+        $per_page = $request->get_param( 'per_page' ) ? absint( $request->get_param( 'per_page' ) ) : 50;
         $search = $request->get_param( 'search' );
         
         $args = array(
@@ -292,9 +299,6 @@ class Xophz_Compass_Quests_REST {
 
         if ( ! empty( $search ) ) {
             $args['s'] = sanitize_text_field( $search );
-            // Note: Native 's' searches post_title and post_content.
-            // A more robust search might hook into posts_where to search meta,
-            // but this covers basic name searches for now.
         }
 
         $query = new WP_Query( $args );
@@ -416,7 +420,6 @@ class Xophz_Compass_Quests_REST {
             $merged[ $p->ID ] = $p;
         }
 
-        // Map slug to icon and label for the UI
         $cpt_map = array();
         foreach ( $registered_cpts as $schema ) {
             $cpt_map[ $schema['slug'] ] = array(
@@ -443,30 +446,42 @@ class Xophz_Compass_Quests_REST {
 
     private function format_contact( $contact ) {
         $user_id = get_post_meta( $contact->ID, '_qb_user_id', true );
-        $email = get_post_meta( $contact->ID, '_qb_raw_email', true );
-        $name = $contact->post_title;
+        $email   = get_post_meta( $contact->ID, '_qb_raw_email', true );
+        $name    = $contact->post_title;
 
         if ( $user_id ) {
             $user = get_userdata( $user_id );
             if ( $user ) {
-                $email = $user->user_email;
-                $name = $user->display_name;
+                if ( empty( $email ) ) $email = $user->user_email;
+                if ( empty( $name ) ) $name = $user->display_name;
             }
         }
 
         $board_stages_json = get_post_meta( $contact->ID, '_qb_board_stages', true );
         $board_stages = empty( $board_stages_json ) ? array() : json_decode( $board_stages_json, true );
 
+        $stage = get_post_meta( $contact->ID, '_qb_lead_status', true ) ?: 'Onboarding';
+        $company = get_post_meta( $contact->ID, '_qb_company', true );
+        $service_package = get_post_meta( $contact->ID, '_qb_service_package', true ) ?: 'COMPASS Executive Consulting';
+        $payment_status = get_post_meta( $contact->ID, '_qb_payment_status', true ) ?: 'Paid';
+        $retainer = get_post_meta( $contact->ID, '_qb_retainer', true );
+        $notes = get_post_meta( $contact->ID, '_qb_notes', true );
+
         return array(
-            'id'           => $contact->ID,
-            'user_id'      => $user_id,
-            'name'         => $name,
-            'email'        => $email,
-            'phone'        => get_post_meta( $contact->ID, '_qb_phone', true ),
-            'lead_status'  => get_post_meta( $contact->ID, '_qb_lead_status', true ),
-            'source'       => get_post_meta( $contact->ID, '_qb_source', true ),
-            'board_stages' => $board_stages,
-            'created_at'   => $contact->post_date,
+            'id'              => (string) $contact->ID,
+            'user_id'         => $user_id,
+            'name'            => $name,
+            'email'           => $email,
+            'phone'           => get_post_meta( $contact->ID, '_qb_phone', true ),
+            'stage'           => $stage,
+            'company'         => $company,
+            'servicePackage' => $service_package,
+            'paymentStatus'  => $payment_status,
+            'retainer'        => $retainer ? (float) $retainer : 2500,
+            'notes'           => $notes,
+            'source'          => get_post_meta( $contact->ID, '_qb_source', true ) ?: 'mycompassconsulting.com',
+            'board_stages'    => $board_stages,
+            'createdDate'     => $contact->post_date,
         );
     }
 
@@ -480,11 +495,32 @@ class Xophz_Compass_Quests_REST {
         if ( isset( $params['phone'] ) ) {
             update_post_meta( $post_id, '_qb_phone', sanitize_text_field( $params['phone'] ) );
         }
-        if ( isset( $params['lead_status'] ) ) {
+        if ( isset( $params['stage'] ) ) {
+            update_post_meta( $post_id, '_qb_lead_status', sanitize_text_field( $params['stage'] ) );
+        } else if ( isset( $params['lead_status'] ) ) {
             update_post_meta( $post_id, '_qb_lead_status', sanitize_text_field( $params['lead_status'] ) );
         }
         if ( isset( $params['source'] ) ) {
             update_post_meta( $post_id, '_qb_source', sanitize_text_field( $params['source'] ) );
+        }
+        if ( isset( $params['company'] ) ) {
+            update_post_meta( $post_id, '_qb_company', sanitize_text_field( $params['company'] ) );
+        }
+        if ( isset( $params['servicePackage'] ) ) {
+            update_post_meta( $post_id, '_qb_service_package', sanitize_text_field( $params['servicePackage'] ) );
+        } else if ( isset( $params['service_package'] ) ) {
+            update_post_meta( $post_id, '_qb_service_package', sanitize_text_field( $params['service_package'] ) );
+        }
+        if ( isset( $params['paymentStatus'] ) ) {
+            update_post_meta( $post_id, '_qb_payment_status', sanitize_text_field( $params['paymentStatus'] ) );
+        } else if ( isset( $params['payment_status'] ) ) {
+            update_post_meta( $post_id, '_qb_payment_status', sanitize_text_field( $params['payment_status'] ) );
+        }
+        if ( isset( $params['retainer'] ) ) {
+            update_post_meta( $post_id, '_qb_retainer', sanitize_text_field( $params['retainer'] ) );
+        }
+        if ( isset( $params['notes'] ) ) {
+            update_post_meta( $post_id, '_qb_notes', sanitize_textarea_field( $params['notes'] ) );
         }
     }
 
@@ -1439,6 +1475,48 @@ class Xophz_Compass_Quests_REST {
         }
         
         return rest_ensure_response( $active_quests );
+    }
+
+    public function get_me_client_data( WP_REST_Request $request ) {
+        $user_id = get_current_user_id();
+        if ( ! $user_id ) {
+            return new WP_Error( 'not_logged_in', 'User is not logged in.', array( 'status' => 401 ) );
+        }
+
+        $contact_query = new WP_Query( array(
+            'post_type' => 'questbook_contact',
+            'posts_per_page' => 1,
+            'meta_query' => array(
+                array(
+                    'key' => '_qb_user_id',
+                    'value' => $user_id,
+                )
+            )
+        ) );
+
+        if ( empty( $contact_query->posts ) ) {
+            return rest_ensure_response( array(
+                'contact' => null,
+                'quests' => array(),
+            ) );
+        }
+
+        $contact = $contact_query->posts[0];
+        $formatted_contact = $this->format_contact( $contact );
+
+        $request->set_param( 'id', $contact->ID );
+        $quests_response = $this->get_contact_quests( $request );
+        $quests = array();
+        if ( ! is_wp_error( $quests_response ) && method_exists( $quests_response, 'get_data' ) ) {
+            $quests = $quests_response->get_data();
+        } elseif ( ! is_wp_error( $quests_response ) && is_array( $quests_response ) ) {
+            $quests = $quests_response;
+        }
+
+        return rest_ensure_response( array(
+            'contact' => $formatted_contact,
+            'quests' => $quests,
+        ) );
     }
 
     public function assign_quest_to_contact( WP_REST_Request $request ) {
