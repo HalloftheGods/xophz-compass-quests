@@ -10,6 +10,9 @@
 class Xophz_Compass_Quests_REST {
 
 	public function register_routes() {
+		add_filter( 'compass_abilities_registry', array( $this, 'register_quests_abilities' ) );
+		add_action( 'wp_abilities_init', array( $this, 'register_wp_abilities' ) );
+
 		add_action( 'rest_api_init', function () {
             register_rest_route( 'questbook/v1', '/contacts', array(
                 array(
@@ -1624,4 +1627,51 @@ class Xophz_Compass_Quests_REST {
 
         return rest_ensure_response( $active_quests[$found_index] );
     }
+
+	public function register_quests_abilities( $abilities ) {
+		if ( ! is_array( $abilities ) ) {
+			$abilities = array();
+		}
+
+		$abilities[] = array(
+			'id'          => 'compass/query_quests',
+			'name'        => 'Query Quests & CRM Contacts',
+			'plugin'      => 'xophz-compass-quests',
+			'category'    => 'CRM',
+			'description' => 'Retrieves active quests, contact status, and task progression.',
+			'parameters'  => array(
+				'contact_id' => array( 'type' => 'integer', 'required' => false, 'description' => 'Optional contact ID' ),
+			),
+		);
+
+		$abilities[] = array(
+			'id'          => 'compass/complete_quest',
+			'name'        => 'Complete Quest Action',
+			'plugin'      => 'xophz-compass-quests',
+			'category'    => 'CRM',
+			'description' => 'Marks a quest task or full quest as completed for a contact.',
+			'parameters'  => array(
+				'contact_id' => array( 'type' => 'integer', 'required' => true, 'description' => 'Contact ID' ),
+				'quest_id'   => array( 'type' => 'string', 'required' => true, 'description' => 'Quest ID' ),
+			),
+		);
+
+		return $abilities;
+	}
+
+	public function register_wp_abilities() {
+		if ( function_exists( 'wp_register_ability' ) ) {
+			wp_register_ability( 'compass/query_quests', array(
+				'label'       => __( 'Query Quests & Contacts', 'xophz-compass-quests' ),
+				'description' => __( 'Retrieves active quests and contact status.', 'xophz-compass-quests' ),
+				'category'    => 'crm',
+			) );
+
+			wp_register_ability( 'compass/complete_quest', array(
+				'label'       => __( 'Complete Quest Action', 'xophz-compass-quests' ),
+				'description' => __( 'Marks a quest completed for a contact.', 'xophz-compass-quests' ),
+				'category'    => 'crm',
+			) );
+		}
+	}
 }
