@@ -23,6 +23,45 @@ class Xophz_Compass_Quests_REST {
                 ),
             ) );
 
+            register_rest_route( 'questbook/v1', '/organizations', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_organizations' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_organization' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/organizations/(?P<id>\d+)', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_organization' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'update_organization' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::DELETABLE,
+                    'callback' => array( $this, 'delete_organization' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/organizations/(?P<id>\d+)/contacts', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_organization_contacts' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
             register_rest_route( 'questbook/v1', '/contacts', array(
                 array(
                     'methods'  => WP_REST_Server::READABLE,
@@ -591,6 +630,7 @@ class Xophz_Compass_Quests_REST {
         );
 
         if (isset($params['user_id'])) $data['wp_user_id'] = absint($params['user_id']);
+        if (isset($params['company_id'])) $data['company_id'] = absint($params['company_id']);
 
         $result = $wpdb->insert($table, $data);
 
@@ -624,6 +664,7 @@ class Xophz_Compass_Quests_REST {
         if (isset($params['stage'])) $data['lead_status'] = sanitize_text_field($params['stage']);
         if (isset($params['source'])) $data['source'] = sanitize_text_field($params['source']);
         if (isset($params['user_id'])) $data['wp_user_id'] = absint($params['user_id']);
+        if (array_key_exists('company_id', $params)) $data['company_id'] = absint($params['company_id']);
         
         $meta = json_decode($existing->meta_data, true) ?: array();
         if (isset($params['notes'])) $meta['notes'] = sanitize_textarea_field($params['notes']);
@@ -744,6 +785,7 @@ class Xophz_Compass_Quests_REST {
             'email'           => $email,
             'phone'           => $contact->phone,
             'stage'           => $contact->lead_status,
+            'company_id'      => (int) $contact->company_id,
             'company'         => $meta['company'] ?? '',
             'servicePackage'  => $meta['servicePackage'] ?? 'COMPASS Executive Consulting',
             'paymentStatus'   => $meta['paymentStatus'] ?? 'Paid',
@@ -1461,6 +1503,7 @@ class Xophz_Compass_Quests_REST {
                 'contact_id' => (int) $deal->contact_id,
                 'contact_name' => trim($deal->contact_name),
                 'contact_email' => $deal->contact_email,
+                'company_id' => (int) $deal->company_id,
                 'amount' => (float) $deal->amount,
                 'stage' => $deal->stage,
                 'description' => $deal->description,
@@ -1483,6 +1526,7 @@ class Xophz_Compass_Quests_REST {
         $data = array(
             'title'       => sanitize_text_field( $params['title'] ?? '' ),
             'contact_id'  => absint( $params['contact_id'] ?? 0 ),
+            'company_id'  => absint( $params['company_id'] ?? 0 ),
             'amount'      => floatval( $params['amount'] ?? 0 ),
             'stage'       => sanitize_text_field( $params['stage'] ?? 'New' ),
             'description' => sanitize_textarea_field( $params['description'] ?? '' ),
@@ -1522,7 +1566,8 @@ class Xophz_Compass_Quests_REST {
 
         $update = array( 'updated_at' => current_time('mysql') );
         if ( isset($params['title']) )       $update['title']       = sanitize_text_field($params['title']);
-        if ( isset($params['contact_id']) )  $update['contact_id']  = absint($params['contact_id']);
+        if ( array_key_exists('contact_id', $params) )  $update['contact_id']  = absint($params['contact_id']);
+        if ( array_key_exists('company_id', $params) )  $update['company_id']  = absint($params['company_id']);
         if ( isset($params['amount']) )      $update['amount']      = floatval($params['amount']);
         if ( isset($params['stage']) )       $update['stage']       = sanitize_text_field($params['stage']);
         if ( isset($params['description']) ) $update['description'] = sanitize_textarea_field($params['description']);
@@ -1969,4 +2014,121 @@ class Xophz_Compass_Quests_REST {
 			) );
 		}
 	}
+    // --- Organizations (Companies) CRUD --- //
+
+    public function get_organizations( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_companies';
+        $search = $request->get_param( 'search' );
+        
+        $where = "WHERE 1=1";
+        $params = array();
+
+        if ( ! empty( $search ) ) {
+            $where .= " AND (name LIKE %s OR domain LIKE %s OR industry LIKE %s)";
+            $like = '%' . $wpdb->esc_like( $search ) . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        $query = "SELECT * FROM {$table} {$where} ORDER BY updated_at DESC";
+        $results = empty($params) ? $wpdb->get_results( $query ) : $wpdb->get_results( $wpdb->prepare( $query, $params ) );
+        
+        $formatted = array();
+        foreach ( $results as $org ) {
+            $formatted[] = array(
+                'id' => (int) $org->id,
+                'name' => $org->name,
+                'domain' => $org->domain,
+                'industry' => $org->industry,
+                'created_at' => $org->created_at
+            );
+        }
+
+        return rest_ensure_response($formatted);
+    }
+
+    public function get_organization( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_companies';
+        $id = (int) $request->get_param('id');
+        
+        $org = $wpdb->get_row( $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id) );
+        if ( ! $org ) return new WP_Error( 'not_found', 'Organization not found', array('status' => 404) );
+
+        return rest_ensure_response(array(
+            'id' => (int) $org->id,
+            'name' => $org->name,
+            'domain' => $org->domain,
+            'industry' => $org->industry,
+            'created_at' => $org->created_at
+        ));
+    }
+
+    public function create_organization( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_companies';
+        $params = $request->get_json_params();
+        
+        $data = array(
+            'name' => sanitize_text_field($params['name'] ?? 'New Organization'),
+            'domain' => sanitize_text_field($params['domain'] ?? ''),
+            'industry' => sanitize_text_field($params['industry'] ?? ''),
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        );
+
+        $inserted = $wpdb->insert($table, $data);
+        if ( ! $inserted ) return new WP_Error( 'insert_failed', 'Could not create organization', array('status' => 500) );
+
+        $req = new WP_REST_Request( 'GET', '/questbook/v1/organizations/' . $wpdb->insert_id );
+        $req->set_param( 'id', $wpdb->insert_id );
+        return $this->get_organization( $req );
+    }
+
+    public function update_organization( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_companies';
+        $id = (int) $request->get_param('id');
+        $params = $request->get_json_params();
+
+        $existing = $wpdb->get_row( $wpdb->prepare("SELECT id FROM {$table} WHERE id = %d", $id) );
+        if ( ! $existing ) return new WP_Error( 'not_found', 'Organization not found', array('status' => 404) );
+
+        $data = array( 'updated_at' => current_time('mysql') );
+        if ( isset($params['name']) ) $data['name'] = sanitize_text_field($params['name']);
+        if ( isset($params['domain']) ) $data['domain'] = sanitize_text_field($params['domain']);
+        if ( isset($params['industry']) ) $data['industry'] = sanitize_text_field($params['industry']);
+
+        $wpdb->update($table, $data, array('id' => $id));
+
+        $req = new WP_REST_Request( 'GET', '/questbook/v1/organizations/' . $id );
+        $req->set_param( 'id', $id );
+        return $this->get_organization( $req );
+    }
+
+    public function delete_organization( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_companies';
+        $id = (int) $request->get_param('id');
+        
+        $wpdb->delete($table, array('id' => $id));
+        return rest_ensure_response(array('deleted' => true, 'id' => $id));
+    }
+
+    public function get_organization_contacts( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_contacts';
+        $id = (int) $request->get_param('id');
+        
+        $contacts = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$table} WHERE company_id = %d ORDER BY created_at DESC", $id) );
+        
+        $formatted = array();
+        foreach ( $contacts as $contact ) {
+            $formatted[] = $this->format_contact( $contact );
+        }
+
+        return rest_ensure_response($formatted);
+    }
 }
