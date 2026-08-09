@@ -12,8 +12,17 @@ class Xophz_Compass_Quests_REST {
 	public function register_routes() {
 		add_filter( 'compass_abilities_registry', array( $this, 'register_quests_abilities' ) );
 		add_action( 'wp_abilities_init', array( $this, 'register_wp_abilities' ) );
+		add_filter( 'compass_perform_widgets', array( $this, 'register_perform_widgets' ) );
 
 		add_action( 'rest_api_init', function () {
+            register_rest_route( 'questbook/v1', '/summary', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_summary' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
             register_rest_route( 'questbook/v1', '/contacts', array(
                 array(
                     'methods'  => WP_REST_Server::READABLE,
@@ -23,6 +32,14 @@ class Xophz_Compass_Quests_REST {
                 array(
                     'methods' => WP_REST_Server::CREATABLE,
                     'callback' => array( $this, 'create_contact' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/sync-wp-users', array(
+                array(
+                    'methods'  => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'sync_wp_users' ),
                     'permission_callback' => array( $this, 'check_permission' ),
                 ),
             ) );
@@ -227,6 +244,34 @@ class Xophz_Compass_Quests_REST {
                     'permission_callback' => array( $this, 'check_permission' ),
                 ),
             ) );
+
+            // Deals CRUD
+            register_rest_route( 'questbook/v1', '/deals', array(
+                array(
+                    'methods'  => WP_REST_Server::READABLE,
+                    'callback' => array( $this, 'get_deals' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( $this, 'create_deal' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/deals/(?P<id>\d+)', array(
+                array(
+                    'methods' => WP_REST_Server::EDITABLE,
+                    'callback' => array( $this, 'update_deal' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+                array(
+                    'methods' => WP_REST_Server::DELETABLE,
+                    'callback' => array( $this, 'delete_deal' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
             register_rest_route( 'questbook/v1', '/quests', array(
                 array(
                     'methods'  => WP_REST_Server::READABLE,
@@ -266,16 +311,10 @@ class Xophz_Compass_Quests_REST {
                 ),
             ) );
 
-            register_rest_route( 'questbook/v1', '/me/client-data', array(
+            register_rest_route( 'questbook/v1', '/me', array(
                 array(
                     'methods'  => WP_REST_Server::READABLE,
                     'callback' => array( $this, 'get_me_client_data' ),
-                    'permission_callback' => array( $this, 'check_permission' ),
-                ),
-            ) );
-
-            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/quests/(?P<quest_id>\d+)', array(
-                array(
                     'methods' => WP_REST_Server::EDITABLE,
                     'callback' => array( $this, 'update_contact_quest' ),
                     'permission_callback' => array( $this, 'check_permission' ),
@@ -288,41 +327,243 @@ class Xophz_Compass_Quests_REST {
         return true;
     }
 
+    public function register_perform_widgets( $widgets ) {
+        $widgets[] = array(
+            'key'           => 'questbook-crm-summary',
+            'plugin'        => 'xophz-compass-quests',
+            'title'         => 'CRM Performance Summary',
+            'icon'          => 'fad fa-chart-line',
+            'color'         => '#62c9ff',
+            'component'     => 'questbook-crm-summary',
+            'data_endpoint' => '/wp-json/questbook/v1/summary',
+            'size'          => 'md',
+            'order'         => 10,
+        );
+        $widgets[] = array(
+            'key'           => 'questbook-pipeline-summary',
+            'plugin'        => 'xophz-compass-quests',
+            'title'         => 'Pipeline & Deals Velocity',
+            'icon'          => 'fad fa-stream',
+            'color'         => '#00e676',
+            'component'     => 'questbook-pipeline-summary',
+            'data_endpoint' => '/wp-json/questbook/v1/deals',
+            'size'          => 'md',
+            'order'         => 11,
+        );
+        $widgets[] = array(
+            'key'           => 'questbook-inbox-activity',
+            'plugin'        => 'xophz-compass-quests',
+            'title'         => 'Inbound Stream',
+            'icon'          => 'fad fa-inbox',
+            'color'         => '#ff9100',
+            'component'     => 'questbook-inbox-activity',
+            'data_endpoint' => '/wp-json/questbook/v1/inbox',
+            'size'          => 'md',
+            'order'         => 12,
+        );
+        $widgets[] = array(
+            'key'           => 'questbook-calendar-events',
+            'plugin'        => 'xophz-compass-quests',
+            'title'         => 'Upcoming Appointments',
+            'icon'          => 'fad fa-calendar-alt',
+            'color'         => '#b388ff',
+            'component'     => 'questbook-calendar-events',
+            'data_endpoint' => '/wp-json/questbook/v1/events',
+            'size'          => 'md',
+            'order'         => 13,
+        );
+        return $widgets;
+    }
+
+    public function get_summary( WP_REST_Request $request ) {
+        global $wpdb;
+        $contacts_tbl = $wpdb->prefix . 'xophz_qb_contacts';
+        $deals_tbl    = $wpdb->prefix . 'xophz_qb_deals';
+        $logs_tbl     = $wpdb->prefix . 'xophz_qb_logs';
+        $events_tbl   = $wpdb->prefix . 'xophz_qb_events';
+
+        $total_contacts = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$contacts_tbl}");
+        $new_contacts_week = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$contacts_tbl} WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+
+        $total_deals = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$deals_tbl}");
+        $deals_revenue = (float) $wpdb->get_var("SELECT SUM(amount) FROM {$deals_tbl} WHERE stage != 'Lost'");
+
+        $unread_inbox = 0;
+        $logs = $wpdb->get_results("SELECT meta_data FROM {$logs_tbl}");
+        foreach ($logs as $l) {
+            $meta = json_decode($l->meta_data, true) ?: array();
+            if (($meta['direction'] ?? '') === 'inbound' && ($meta['is_read'] ?? 'yes') === 'no') {
+                $unread_inbox++;
+            }
+        }
+
+        $today = current_time('Y-m-d');
+        $today_events = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$events_tbl} WHERE start_date LIKE %s", $today . '%'));
+
+        return rest_ensure_response(array(
+            'total_contacts'    => $total_contacts,
+            'new_contacts_week' => $new_contacts_week,
+            'total_deals'       => $total_deals,
+            'deals_revenue'     => $deals_revenue,
+            'unread_inbox'      => $unread_inbox,
+            'today_events'      => $today_events,
+        ));
+    }
+
+    public function sync_wp_users( WP_REST_Request $request ) {
+        global $wpdb;
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+
+        $users = get_users( array( 'number' => 1000 ) );
+        $synced_count = 0;
+
+        foreach ( $users as $user ) {
+            $wp_first = get_user_meta( $user->ID, 'first_name', true );
+            $wp_last  = get_user_meta( $user->ID, 'last_name', true );
+            
+            if ( empty( $wp_first ) && empty( $wp_last ) ) {
+                $display_name = trim( $user->display_name );
+                if ( ! empty( $display_name ) && strpos( $display_name, '@' ) === false ) {
+                    $parts = explode( ' ', $display_name, 2 );
+                    $wp_first = $parts[0];
+                    $wp_last  = $parts[1] ?? '';
+                } else {
+                    $wp_first = $user->user_login;
+                    $wp_last  = '';
+                }
+            }
+
+            $existing = $wpdb->get_row( $wpdb->prepare(
+                "SELECT id, first_name, last_name, email, wp_user_id FROM {$contacts_table} WHERE wp_user_id = %d OR (email = %s AND email != '')",
+                $user->ID,
+                $user->user_email
+            ) );
+
+            if ( $existing ) {
+                $update_data = array();
+                if ( ! $existing->wp_user_id ) {
+                    $update_data['wp_user_id'] = $user->ID;
+                }
+                $current_name = trim( $existing->first_name . ' ' . $existing->last_name );
+                if ( empty( $current_name ) || $current_name === $existing->email || strpos( $current_name, '@' ) !== false ) {
+                    $update_data['first_name'] = $wp_first;
+                    $update_data['last_name']  = $wp_last;
+                }
+                if ( ! empty( $update_data ) ) {
+                    $wpdb->update( $contacts_table, $update_data, array( 'id' => $existing->id ) );
+                    $synced_count++;
+                }
+            } else {
+                $wpdb->insert(
+                    $contacts_table,
+                    array(
+                        'wp_user_id'  => $user->ID,
+                        'first_name'  => $wp_first,
+                        'last_name'   => $wp_last,
+                        'email'       => $user->user_email,
+                        'lead_status' => 'Customer',
+                        'source'      => 'WP User',
+                        'created_at'  => current_time( 'mysql' ),
+                        'updated_at'  => current_time( 'mysql' ),
+                    )
+                );
+                $synced_count++;
+            }
+        }
+
+        return rest_ensure_response( array(
+            'success'      => true,
+            'synced_count' => $synced_count,
+            'total_users'  => count( $users ),
+        ) );
+    }
+
     public function get_contacts( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_contacts';
+
         $page = $request->get_param( 'page' ) ? absint( $request->get_param( 'page' ) ) : 1;
         $per_page = $request->get_param( 'per_page' ) ? absint( $request->get_param( 'per_page' ) ) : 50;
         $search = $request->get_param( 'search' );
         
-        $args = array(
-            'post_type'      => 'questbook_contact',
-            'paged'          => $page,
-            'posts_per_page' => $per_page,
-            'post_status'    => 'publish',
-        );
+        $offset = ($page - 1) * $per_page;
+        $where = "WHERE 1=1";
+        $params = array();
 
         if ( ! empty( $search ) ) {
-            $args['s'] = sanitize_text_field( $search );
+            $where .= " AND (first_name LIKE %s OR last_name LIKE %s OR email LIKE %s OR company LIKE %s)";
+            $like = '%' . $wpdb->esc_like( $search ) . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
         }
 
-        $query = new WP_Query( $args );
-        $formatted_contacts = array();
+        $query = "SELECT * FROM {$table} {$where} ORDER BY updated_at DESC LIMIT %d OFFSET %d";
+        $params[] = $per_page;
+        $params[] = $offset;
 
-        foreach ( $query->posts as $contact ) {
-            $formatted_contacts[] = $this->format_contact( $contact );
+        $results = $wpdb->get_results( $wpdb->prepare( $query, $params ) );
+        
+        // Get total count for pagination
+        $count_query = "SELECT COUNT(id) FROM {$table} {$where}";
+        $total_items = $wpdb->get_var( empty($params) ? $count_query : $wpdb->prepare( $count_query, array_slice($params, 0, -2) ) );
+        $total_pages = ceil($total_items / $per_page);
+
+        $formatted_contacts = array();
+        $existing_emails = array();
+
+        foreach ( $results as $contact ) {
+            $formatted = $this->format_contact( $contact );
+            $formatted_contacts[] = $formatted;
+            if ( ! empty( $formatted['email'] ) ) {
+                $existing_emails[] = strtolower( $formatted['email'] );
+            }
+        }
+
+        // Bridge WP Users into search results if searching and matches WP User table
+        if ( ! empty( $search ) && strlen( trim( $search ) ) >= 2 ) {
+            $wp_user_matches = get_users( array(
+                'search'         => '*' . esc_attr( $search ) . '*',
+                'search_columns' => array( 'user_login', 'user_nicename', 'user_email', 'display_name' ),
+                'number'         => 10,
+            ) );
+
+            foreach ( $wp_user_matches as $wp_user ) {
+                $email = strtolower( $wp_user->user_email );
+                if ( ! in_array( $email, $existing_emails, true ) ) {
+                    $formatted_contacts[] = array(
+                        'id'          => 'wp_' . $wp_user->ID,
+                        'wp_user_id'  => $wp_user->ID,
+                        'name'        => $wp_user->display_name ?: $wp_user->user_login,
+                        'email'       => $wp_user->user_email,
+                        'phone'       => '',
+                        'company'     => '',
+                        'lead_status' => 'WP User',
+                        'source'      => 'WordPress User',
+                        'is_wp_user'  => true,
+                        'created_at'  => $wp_user->user_registered,
+                    );
+                    $existing_emails[] = $email;
+                }
+            }
         }
 
         $response = new WP_REST_Response( $formatted_contacts );
-        $response->header( 'X-WP-Total', $query->found_posts );
-        $response->header( 'X-WP-TotalPages', $query->max_num_pages );
+        $response->header( 'X-WP-Total', $total_items );
+        $response->header( 'X-WP-TotalPages', $total_pages );
 
         return $response;
     }
 
     public function get_contact( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_contacts';
         $id = $request->get_param( 'id' );
-        $contact = get_post( $id );
+        
+        $contact = $wpdb->get_row( $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id) );
 
-        if ( ! $contact || $contact->post_type !== 'questbook_contact' ) {
+        if ( ! $contact ) {
             return new WP_Error( 'no_contact', 'Invalid contact', array( 'status' => 404 ) );
         }
 
@@ -330,56 +571,81 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function create_contact( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_contacts';
         $params = $request->get_json_params();
         
-        $post_data = array(
-            'post_title'   => sanitize_text_field( $params['name'] ),
-            'post_type'    => 'questbook_contact',
-            'post_status'  => 'publish',
+        $name_parts = explode(' ', sanitize_text_field($params['name'] ?? 'New Lead'), 2);
+        
+        $data = array(
+            'first_name' => $name_parts[0],
+            'last_name' => $name_parts[1] ?? '',
+            'email' => sanitize_email($params['email'] ?? ''),
+            'phone' => sanitize_text_field($params['phone'] ?? ''),
+            'source' => sanitize_text_field($params['source'] ?? 'Manual'),
+            'lead_status' => sanitize_text_field($params['stage'] ?? 'New Lead'),
+            'meta_data' => wp_json_encode(array(
+                'notes' => sanitize_textarea_field($params['notes'] ?? ''),
+                'company' => sanitize_text_field($params['company'] ?? ''),
+            ))
         );
 
-        $post_id = wp_insert_post( $post_data );
+        if (isset($params['user_id'])) $data['wp_user_id'] = absint($params['user_id']);
 
-        if ( is_wp_error( $post_id ) ) {
-            return $post_id;
+        $result = $wpdb->insert($table, $data);
+
+        if ( ! $result ) {
+            return new WP_Error( 'insert_failed', 'Could not create contact', array( 'status' => 500 ) );
         }
 
-        // Handle Meta
-        $this->update_contact_meta( $post_id, $params );
-
-        return $this->get_contact( new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $post_id ) );
+        return $this->get_contact( new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $wpdb->insert_id ) );
     }
 
     public function update_contact( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_contacts';
+        
         $id = $request->get_param( 'id' );
         $params = $request->get_json_params();
 
-        $post_data = array(
-            'ID'           => $id,
-        );
+        // Get existing to merge meta_data
+        $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id));
+        if ( ! $existing ) return new WP_Error( 'not_found', 'Contact not found', array('status' => 404) );
+
+        $data = array();
         
-        if ( isset( $params['name'] ) ) {
-            $post_data['post_title'] = sanitize_text_field( $params['name'] );
+        if (isset($params['name'])) {
+            $name_parts = explode(' ', sanitize_text_field($params['name']), 2);
+            $data['first_name'] = $name_parts[0];
+            $data['last_name'] = $name_parts[1] ?? '';
         }
+        if (isset($params['email'])) $data['email'] = sanitize_email($params['email']);
+        if (isset($params['phone'])) $data['phone'] = sanitize_text_field($params['phone']);
+        if (isset($params['stage'])) $data['lead_status'] = sanitize_text_field($params['stage']);
+        if (isset($params['source'])) $data['source'] = sanitize_text_field($params['source']);
+        if (isset($params['user_id'])) $data['wp_user_id'] = absint($params['user_id']);
+        
+        $meta = json_decode($existing->meta_data, true) ?: array();
+        if (isset($params['notes'])) $meta['notes'] = sanitize_textarea_field($params['notes']);
+        if (isset($params['company'])) $meta['company'] = sanitize_text_field($params['company']);
+        if (isset($params['servicePackage'])) $meta['servicePackage'] = sanitize_text_field($params['servicePackage']);
+        if (isset($params['paymentStatus'])) $meta['paymentStatus'] = sanitize_text_field($params['paymentStatus']);
+        if (isset($params['retainer'])) $meta['retainer'] = sanitize_text_field($params['retainer']);
+        if (isset($params['board_stages'])) $meta['board_stages'] = $params['board_stages'];
 
-        $post_id = wp_update_post( $post_data );
+        $data['meta_data'] = wp_json_encode($meta);
 
-        if ( is_wp_error( $post_id ) ) {
-            return $post_id;
-        }
+        $wpdb->update($table, $data, array('id' => $id));
 
-        $this->update_contact_meta( $post_id, $params );
-
-        if ( isset( $params['board_stages'] ) && is_array( $params['board_stages'] ) ) {
-            update_post_meta( $post_id, '_qb_board_stages', wp_json_encode( $params['board_stages'] ) );
-        }
-
-        return $this->get_contact( new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $post_id ) );
+        return $this->get_contact( new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $id ) );
     }
 
     public function delete_contact( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_contacts';
         $id = $request->get_param( 'id' );
-        $result = wp_delete_post( $id, true );
+        
+        $result = $wpdb->delete($table, array('id' => $id));
 
         if ( ! $result ) {
             return new WP_Error( 'cant_delete', 'Could not delete contact', array( 'status' => 500 ) );
@@ -448,83 +714,45 @@ class Xophz_Compass_Quests_REST {
     }
 
     private function format_contact( $contact ) {
-        $user_id = get_post_meta( $contact->ID, '_qb_user_id', true );
-        $email   = get_post_meta( $contact->ID, '_qb_raw_email', true );
-        $name    = $contact->post_title;
+        $meta = json_decode($contact->meta_data, true) ?: array();
+        $name = trim($contact->first_name . ' ' . $contact->last_name);
+        $email = $contact->email;
 
-        if ( $user_id ) {
-            $user = get_userdata( $user_id );
+        if ( $contact->wp_user_id ) {
+            $user = get_userdata( $contact->wp_user_id );
             if ( $user ) {
                 if ( empty( $email ) ) $email = $user->user_email;
-                if ( empty( $name ) ) $name = $user->display_name;
+
+                $wp_first = get_user_meta( $user->ID, 'first_name', true );
+                $wp_last  = get_user_meta( $user->ID, 'last_name', true );
+                $wp_full  = trim( $wp_first . ' ' . $wp_last );
+
+                if ( empty( $wp_full ) ) {
+                    $wp_full = ( $user->display_name && strpos( $user->display_name, '@' ) === false ) ? $user->display_name : $user->user_login;
+                }
+
+                if ( empty( $name ) || $name === $email || strpos( $name, '@' ) !== false ) {
+                    $name = $wp_full;
+                }
             }
         }
 
-        $board_stages_json = get_post_meta( $contact->ID, '_qb_board_stages', true );
-        $board_stages = empty( $board_stages_json ) ? array() : json_decode( $board_stages_json, true );
-
-        $stage = get_post_meta( $contact->ID, '_qb_lead_status', true ) ?: 'Onboarding';
-        $company = get_post_meta( $contact->ID, '_qb_company', true );
-        $service_package = get_post_meta( $contact->ID, '_qb_service_package', true ) ?: 'COMPASS Executive Consulting';
-        $payment_status = get_post_meta( $contact->ID, '_qb_payment_status', true ) ?: 'Paid';
-        $retainer = get_post_meta( $contact->ID, '_qb_retainer', true );
-        $notes = get_post_meta( $contact->ID, '_qb_notes', true );
-
         return array(
-            'id'              => (string) $contact->ID,
-            'user_id'         => $user_id,
+            'id'              => (string) $contact->id,
+            'user_id'         => $contact->wp_user_id,
             'name'            => $name,
             'email'           => $email,
-            'phone'           => get_post_meta( $contact->ID, '_qb_phone', true ),
-            'stage'           => $stage,
-            'company'         => $company,
-            'servicePackage' => $service_package,
-            'paymentStatus'  => $payment_status,
-            'retainer'        => $retainer ? (float) $retainer : 2500,
-            'notes'           => $notes,
-            'source'          => get_post_meta( $contact->ID, '_qb_source', true ) ?: 'mycompassconsulting.com',
-            'board_stages'    => $board_stages,
-            'createdDate'     => $contact->post_date,
+            'phone'           => $contact->phone,
+            'stage'           => $contact->lead_status,
+            'company'         => $meta['company'] ?? '',
+            'servicePackage'  => $meta['servicePackage'] ?? 'COMPASS Executive Consulting',
+            'paymentStatus'   => $meta['paymentStatus'] ?? 'Paid',
+            'retainer'        => isset($meta['retainer']) ? (float) $meta['retainer'] : 2500,
+            'notes'           => $meta['notes'] ?? '',
+            'source'          => $contact->source ?: 'mycompassconsulting.com',
+            'board_stages'    => $meta['board_stages'] ?? array(),
+            'createdDate'     => $contact->created_at,
         );
-    }
-
-    private function update_contact_meta( $post_id, $params ) {
-        if ( isset( $params['user_id'] ) ) {
-            update_post_meta( $post_id, '_qb_user_id', absint( $params['user_id'] ) );
-        }
-        if ( isset( $params['email'] ) ) {
-            update_post_meta( $post_id, '_qb_raw_email', sanitize_email( $params['email'] ) );
-        }
-        if ( isset( $params['phone'] ) ) {
-            update_post_meta( $post_id, '_qb_phone', sanitize_text_field( $params['phone'] ) );
-        }
-        if ( isset( $params['stage'] ) ) {
-            update_post_meta( $post_id, '_qb_lead_status', sanitize_text_field( $params['stage'] ) );
-        } else if ( isset( $params['lead_status'] ) ) {
-            update_post_meta( $post_id, '_qb_lead_status', sanitize_text_field( $params['lead_status'] ) );
-        }
-        if ( isset( $params['source'] ) ) {
-            update_post_meta( $post_id, '_qb_source', sanitize_text_field( $params['source'] ) );
-        }
-        if ( isset( $params['company'] ) ) {
-            update_post_meta( $post_id, '_qb_company', sanitize_text_field( $params['company'] ) );
-        }
-        if ( isset( $params['servicePackage'] ) ) {
-            update_post_meta( $post_id, '_qb_service_package', sanitize_text_field( $params['servicePackage'] ) );
-        } else if ( isset( $params['service_package'] ) ) {
-            update_post_meta( $post_id, '_qb_service_package', sanitize_text_field( $params['service_package'] ) );
-        }
-        if ( isset( $params['paymentStatus'] ) ) {
-            update_post_meta( $post_id, '_qb_payment_status', sanitize_text_field( $params['paymentStatus'] ) );
-        } else if ( isset( $params['payment_status'] ) ) {
-            update_post_meta( $post_id, '_qb_payment_status', sanitize_text_field( $params['payment_status'] ) );
-        }
-        if ( isset( $params['retainer'] ) ) {
-            update_post_meta( $post_id, '_qb_retainer', sanitize_text_field( $params['retainer'] ) );
-        }
-        if ( isset( $params['notes'] ) ) {
-            update_post_meta( $post_id, '_qb_notes', sanitize_textarea_field( $params['notes'] ) );
-        }
     }
 
     // --- Boards CRUD --- //
@@ -800,36 +1028,25 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function get_contact_logs( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_logs';
         $id = $request->get_param( 'id' );
         
-        $args = array(
-            'post_type'      => 'questbook_log',
-            'posts_per_page' => -1,
-            'meta_query'     => array(
-                array(
-                    'key'     => '_qb_contact_id',
-                    'value'   => $id,
-                    'compare' => '='
-                )
-            ),
-            'orderby'        => 'date',
-            'order'          => 'ASC'
-        );
-        
-        $logs = get_posts( $args );
+        $logs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$table} WHERE contact_id = %d ORDER BY created_at ASC", $id) );
         $formatted_logs = array();
         
         foreach ( $logs as $log ) {
+            $meta = json_decode($log->meta_data, true) ?: array();
             $formatted_logs[] = array(
-                'id'         => $log->ID,
-                'title'      => $log->post_title,
-                'content'    => get_post_meta( $log->ID, '_qb_message_payload', true ),
-                'type'       => get_post_meta( $log->ID, '_qb_log_type', true ),
-                'direction'  => get_post_meta( $log->ID, '_qb_direction', true ),
-                'internal'   => get_post_meta( $log->ID, '_qb_is_internal', true ) === 'yes',
-                'promoted_to'=> get_post_meta( $log->ID, '_qb_promoted_to', true ),
-                'is_read'    => get_post_meta( $log->ID, '_qb_is_read', true ) !== 'no',
-                'date'       => $log->post_date,
+                'id'         => (string) $log->id,
+                'title'      => $meta['title'] ?? ucfirst( $log->action_type ) . ' Log',
+                'content'    => $log->description,
+                'type'       => $log->action_type,
+                'direction'  => $meta['direction'] ?? 'outbound',
+                'internal'   => !empty($meta['internal']) && $meta['internal'] === 'yes',
+                'promoted_to'=> $meta['promoted_to'] ?? '',
+                'is_read'    => !isset($meta['is_read']) || $meta['is_read'] !== 'no',
+                'date'       => $log->created_at,
             );
         }
         
@@ -837,6 +1054,10 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function create_contact_log( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_logs';
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+        
         $id = $request->get_param( 'id' );
         $params = $request->get_json_params();
         
@@ -847,28 +1068,32 @@ class Xophz_Compass_Quests_REST {
         if ( empty( $content ) ) {
             return new WP_Error( 'empty_content', 'Log content cannot be empty', array( 'status' => 400 ) );
         }
-        
-        $post_data = array(
-            'post_title'   => ucfirst( $type ) . ' Log',
-            'post_type'    => 'questbook_log',
-            'post_status'  => 'publish',
+
+        $meta = array(
+            'title' => ucfirst( $type ) . ' Log',
+            'direction' => 'outbound',
+            'internal' => $internal,
+            'is_read' => 'yes'
         );
+
+        $data = array(
+            'contact_id' => absint($id),
+            'action_type' => $type,
+            'description' => $content,
+            'created_by' => get_current_user_id(),
+            'meta_data' => wp_json_encode($meta)
+        );
+
+        $result = $wpdb->insert($table, $data);
         
-        $log_id = wp_insert_post( $post_data );
-        
-        if ( is_wp_error( $log_id ) ) {
-            return $log_id;
+        if ( ! $result ) {
+            return new WP_Error( 'insert_failed', 'Could not create log', array( 'status' => 500 ) );
         }
-        
-        update_post_meta( $log_id, '_qb_contact_id', $id );
-        update_post_meta( $log_id, '_qb_log_type', $type );
-        update_post_meta( $log_id, '_qb_direction', 'outbound' ); 
-        update_post_meta( $log_id, '_qb_is_internal', $internal );
-        update_post_meta( $log_id, '_qb_message_payload', $content );
-        update_post_meta( $log_id, '_qb_is_read', 'yes' );
+        $log_id = $wpdb->insert_id;
         
         if ( $type === 'sms' && $internal === 'no' ) {
-            $to_phone = get_post_meta( $id, '_qb_phone', true );
+            $contact = $wpdb->get_row($wpdb->prepare("SELECT phone FROM {$contacts_table} WHERE id = %d", $id));
+            $to_phone = $contact ? $contact->phone : '';
 
             if ( $to_phone ) {
                 if ( class_exists( 'Xophz_Compass_Twilio_API' ) ) {
@@ -883,18 +1108,22 @@ class Xophz_Compass_Quests_REST {
                 error_log('Questbook Twilio Error: Missing Contact Phone Number.');
             }
         } elseif ( $type === 'email' && $internal === 'no' ) {
-            $to_email = get_post_meta( $id, '_qb_raw_email', true );
+            $contact = $wpdb->get_row($wpdb->prepare("SELECT email FROM {$contacts_table} WHERE id = %d", $id));
+            $to_email = $contact ? $contact->email : '';
             if ( $to_email ) {
-                // Future enhancement: Fetch from_email and subject from settings
                 $subject = "Message from Compass Support";
                 wp_mail( $to_email, $subject, $content );
             }
         }
         
-        return rest_ensure_response( array( 'success' => true, 'log_id' => $log_id ) );
+        return rest_ensure_response( array( 'success' => true, 'log_id' => (string)$log_id ) );
     }
 
     public function handle_twilio_webhook( WP_REST_Request $request ) {
+        global $wpdb;
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+        $logs_table = $wpdb->prefix . 'xophz_qb_logs';
+        
         $params = $request->get_body_params();
         $from = isset( $params['From'] ) ? sanitize_text_field( $params['From'] ) : '';
         $body = isset( $params['Body'] ) ? sanitize_textarea_field( $params['Body'] ) : '';
@@ -903,36 +1132,34 @@ class Xophz_Compass_Quests_REST {
             return new WP_Error( 'missing_data', 'Missing From or Body', array( 'status' => 400 ) );
         }
         
-        $contacts = get_posts( array(
-            'post_type'  => 'questbook_contact',
-            'meta_key'   => '_qb_phone',
-            'meta_value' => $from,
-            'numberposts'=> 1
-        ) );
+        $contact = $wpdb->get_row($wpdb->prepare("SELECT id FROM {$contacts_table} WHERE phone = %s LIMIT 1", $from));
         
-        if ( empty( $contacts ) ) {
-            $contact_id = wp_insert_post( array(
-                'post_title'  => 'Unknown (' . $from . ')',
-                'post_type'   => 'questbook_contact',
-                'post_status' => 'publish'
-            ) );
-            update_post_meta( $contact_id, '_qb_phone', $from );
+        if ( ! $contact ) {
+            $wpdb->insert($contacts_table, array(
+                'first_name' => 'Unknown',
+                'last_name' => "($from)",
+                'phone' => $from,
+                'lead_status' => 'New Lead',
+                'source' => 'Twilio SMS'
+            ));
+            $contact_id = $wpdb->insert_id;
         } else {
-            $contact_id = $contacts[0]->ID;
+            $contact_id = $contact->id;
         }
         
-        $log_id = wp_insert_post( array(
-            'post_title'   => 'Inbound SMS',
-            'post_type'    => 'questbook_log',
-            'post_status'  => 'publish',
-        ) );
-        
-        update_post_meta( $log_id, '_qb_contact_id', $contact_id );
-        update_post_meta( $log_id, '_qb_log_type', 'sms' );
-        update_post_meta( $log_id, '_qb_direction', 'inbound' );
-        update_post_meta( $log_id, '_qb_is_internal', 'no' );
-        update_post_meta( $log_id, '_qb_message_payload', $body );
-        update_post_meta( $log_id, '_qb_is_read', 'no' );
+        $meta = array(
+            'title' => 'Inbound SMS',
+            'direction' => 'inbound',
+            'internal' => 'no',
+            'is_read' => 'no'
+        );
+
+        $wpdb->insert($logs_table, array(
+            'contact_id' => $contact_id,
+            'action_type' => 'sms',
+            'description' => $body,
+            'meta_data' => wp_json_encode($meta)
+        ));
         
         $response = new WP_REST_Response( '<Response></Response>' );
         $response->header( 'Content-Type', 'text/xml' );
@@ -940,6 +1167,10 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function handle_email_webhook( WP_REST_Request $request ) {
+        global $wpdb;
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+        $logs_table = $wpdb->prefix . 'xophz_qb_logs';
+
         $params = $request->get_params();
         $from = isset( $params['from'] ) ? sanitize_text_field( $params['from'] ) : '';
         $text = isset( $params['text'] ) ? sanitize_textarea_field( $params['text'] ) : '';
@@ -947,37 +1178,36 @@ class Xophz_Compass_Quests_REST {
         if ( empty( $from ) ) return new WP_Error( 'missing_data', 'Missing from', array('status' => 400) );
         
         preg_match( '/<([^>]+)>/', $from, $matches );
-        $raw_email = isset( $matches[1] ) ? $matches[1] : $from;
+        $raw_email = isset( $matches[1] ) ? sanitize_email($matches[1]) : sanitize_email($from);
         
-        $contacts = get_posts( array(
-            'post_type'  => 'questbook_contact',
-            'meta_key'   => '_qb_raw_email',
-            'meta_value' => $raw_email,
-            'numberposts'=> 1
-        ) );
+        $contact = $wpdb->get_row($wpdb->prepare("SELECT id FROM {$contacts_table} WHERE email = %s LIMIT 1", $raw_email));
         
-        $contact_id = ! empty( $contacts ) ? $contacts[0]->ID : 0;
-        if ( ! $contact_id ) {
-             $contact_id = wp_insert_post( array(
-                'post_title'  => 'Unknown (' . $raw_email . ')',
-                'post_type'   => 'questbook_contact',
-                'post_status' => 'publish'
-            ) );
-            update_post_meta( $contact_id, '_qb_raw_email', $raw_email );
+        if ( ! $contact ) {
+             $wpdb->insert($contacts_table, array(
+                'first_name' => 'Unknown',
+                'last_name' => "($raw_email)",
+                'email' => $raw_email,
+                'lead_status' => 'New Lead',
+                'source' => 'Email Webhook'
+            ));
+            $contact_id = $wpdb->insert_id;
+        } else {
+            $contact_id = $contact->id;
         }
         
-        $log_id = wp_insert_post( array(
-            'post_title'   => 'Inbound Email',
-            'post_type'    => 'questbook_log',
-            'post_status'  => 'publish',
-        ) );
-        
-        update_post_meta( $log_id, '_qb_contact_id', $contact_id );
-        update_post_meta( $log_id, '_qb_log_type', 'email' );
-        update_post_meta( $log_id, '_qb_direction', 'inbound' );
-        update_post_meta( $log_id, '_qb_is_internal', 'no' );
-        update_post_meta( $log_id, '_qb_message_payload', $text );
-        update_post_meta( $log_id, '_qb_is_read', 'no' );
+        $meta = array(
+            'title' => 'Inbound Email',
+            'direction' => 'inbound',
+            'internal' => 'no',
+            'is_read' => 'no'
+        );
+
+        $wpdb->insert($logs_table, array(
+            'contact_id' => $contact_id,
+            'action_type' => 'email',
+            'description' => $text,
+            'meta_data' => wp_json_encode($meta)
+        ));
         
         return rest_ensure_response( array('success' => true) );
     }
@@ -1025,15 +1255,18 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function promote_log_to_quest( WP_REST_Request $request ) {
-        $log_id = $request->get_param( 'log_id' );
-        $log = get_post( $log_id );
+        global $wpdb;
+        $logs_table = $wpdb->prefix . 'xophz_qb_logs';
         
-        if ( ! $log || $log->post_type !== 'questbook_log' ) {
+        $log_id = $request->get_param( 'log_id' );
+        $log = $wpdb->get_row( $wpdb->prepare("SELECT * FROM {$logs_table} WHERE id = %d", $log_id) );
+        
+        if ( ! $log ) {
             return new WP_Error( 'not_found', 'Log not found', array( 'status' => 404 ) );
         }
         
-        $contact_id = get_post_meta( $log_id, '_qb_contact_id', true );
-        $content = get_post_meta( $log_id, '_qb_message_payload', true );
+        $contact_id = $log->contact_id;
+        $content = $log->description;
         
         $quest_data = array(
             'post_title'   => 'Follow up: ' . wp_trim_words( $content, 5 ),
@@ -1048,64 +1281,55 @@ class Xophz_Compass_Quests_REST {
             return $quest_id;
         }
         
-        // Link quest to contact
         if ( $contact_id ) {
             update_post_meta( $quest_id, '_qb_contact_id', $contact_id );
         }
         
-        // Mark log as promoted
-        update_post_meta( $log_id, '_qb_promoted_to', $quest_id );
+        // Mark log as promoted via meta_data
+        $meta = json_decode($log->meta_data, true) ?: array();
+        $meta['promoted_to'] = $quest_id;
+        $wpdb->update($logs_table, array('meta_data' => wp_json_encode($meta)), array('id' => $log_id));
         
         return rest_ensure_response( array( 'success' => true, 'quest_id' => $quest_id ) );
     }
 
     public function get_global_inbox( WP_REST_Request $request ) {
-        $args = array(
-            'post_type'      => 'questbook_log',
-            'posts_per_page' => 100,
-            'orderby'        => 'date',
-            'order'          => 'DESC',
-        );
-
-        $query = new WP_Query( $args );
-        $logs = array();
+        global $wpdb;
+        $logs_table = $wpdb->prefix . 'xophz_qb_logs';
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
         
-        foreach ( $query->posts as $log ) {
-            $contact_id = get_post_meta( $log->ID, '_qb_contact_id', true );
-            $contact_name = 'Unknown';
-            if ( $contact_id ) {
-                $contact_name = get_the_title( $contact_id );
-            }
+        $logs_data = $wpdb->get_results("SELECT l.*, c.first_name, c.last_name, c.email as contact_email FROM {$logs_table} l LEFT JOIN {$contacts_table} c ON l.contact_id = c.id ORDER BY l.created_at DESC LIMIT 100");
+        
+        $logs = array();
+        foreach ( $logs_data as $log ) {
+            $meta = json_decode($log->meta_data, true) ?: array();
+            $contact_name = trim(($log->first_name ?? '') . ' ' . ($log->last_name ?? ''));
+            if (empty($contact_name)) $contact_name = $log->contact_email ?: 'Unknown';
             
             $logs[] = array(
-                'id'         => $log->ID,
-                'contact_id' => $contact_id,
+                'id'         => (string) $log->id,
+                'contact_id' => (string) $log->contact_id,
                 'contact_name'=> $contact_name,
-                'title'      => $log->post_title,
-                'content'    => get_post_meta( $log->ID, '_qb_message_payload', true ),
-                'type'       => get_post_meta( $log->ID, '_qb_log_type', true ),
-                'direction'  => get_post_meta( $log->ID, '_qb_direction', true ),
-                'internal'   => get_post_meta( $log->ID, '_qb_is_internal', true ) === 'yes',
-                'promoted_to'=> get_post_meta( $log->ID, '_qb_promoted_to', true ),
-                'is_read'    => get_post_meta( $log->ID, '_qb_is_read', true ) !== 'no',
-                'date'       => $log->post_date,
+                'title'      => $meta['title'] ?? ucfirst($log->action_type) . ' Log',
+                'content'    => $log->description,
+                'type'       => $log->action_type,
+                'direction'  => $meta['direction'] ?? 'outbound',
+                'internal'   => !empty($meta['internal']) && $meta['internal'] === 'yes',
+                'promoted_to'=> $meta['promoted_to'] ?? '',
+                'is_read'    => !isset($meta['is_read']) || $meta['is_read'] !== 'no',
+                'date'       => $log->created_at,
             );
         }
 
-        // Fetch recent Forminator entries natively to ensure the inbox shows them
-        // even if the webhook failed or they are older than the CRM plugin.
+        // Fetch recent Forminator entries to show in inbox even without webhook
         if ( class_exists( 'Forminator_API' ) ) {
-            global $wpdb;
-            $table = $wpdb->prefix . 'frmt_form_entry';
-            if ( $wpdb->get_var( "SHOW TABLES LIKE '$table'" ) === $table ) {
-                $recent_entries = $wpdb->get_results( "SELECT entry_id, form_id, date_created FROM $table ORDER BY date_created DESC LIMIT 50" );
+            $frmt_table = $wpdb->prefix . 'frmt_form_entry';
+            $frmt_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$frmt_table}'" ) === $frmt_table;
+            
+            if ( $frmt_exists ) {
+                $recent_entries = $wpdb->get_results( "SELECT entry_id, form_id, date_created FROM {$frmt_table} ORDER BY date_created DESC LIMIT 50" );
                 
                 foreach ( $recent_entries as $entry ) {
-                    // Check if this entry is already linked as a questbook log (to avoid duplicates)
-                    // We identify duplicates if a log has the exact same payload or if we just want to show raw entries.
-                    // Actually, the webhook creates a log. If the log exists, we don't need to duplicate.
-                    // However, we'll format it as an inbox item.
-                    
                     $form_id = $entry->form_id;
                     $full_entry = class_exists('Forminator_Form_Entry_Model') ? new Forminator_Form_Entry_Model( $entry->entry_id ) : null;
                     
@@ -1117,70 +1341,33 @@ class Xophz_Compass_Quests_REST {
                         foreach ( $full_entry->meta_data as $meta_key => $meta ) {
                             $meta_name = isset( $meta['name'] ) ? $meta['name'] : $meta_key;
                             $meta_val  = isset( $meta['value'] ) ? $meta['value'] : '';
-
-                            if ( is_array( $meta_val ) ) {
-                                $meta_val = implode( ', ', $meta_val );
-                            }
-
-                            if ( strpos( $meta_name, 'email' ) !== false ) {
-                                $email = $meta_val;
-                            }
-                            if ( strpos( $meta_name, 'name' ) !== false && $name === 'Form Submission' ) {
-                                $name = $meta_val;
-                            }
+                            if ( is_array( $meta_val ) ) $meta_val = implode( ', ', $meta_val );
+                            if ( strpos( $meta_name, 'email' ) !== false ) $email = $meta_val;
+                            if ( strpos( $meta_name, 'name' ) !== false && $name === 'Form Submission' ) $name = $meta_val;
                             if ( ! empty( $meta_val ) && is_string( $meta_val ) && strpos( $meta_name, '_' ) !== 0 ) {
                                 $content_parts[] = ucfirst( str_replace('-', ' ', $meta_name) ) . ': ' . $meta_val;
                             }
                         }
                     }
                     
+                    // Match contact via custom table by email or wp_user_id
                     $contact_id = 0;
-                    
-                    // First check if explicitly linked via meta
-                    $args = array(
-                        'post_type'  => 'questbook_contact',
-                        'meta_key'   => '_qb_forminator_entry',
-                        'meta_value' => $entry->entry_id,
-                        'fields'     => 'ids',
-                        'numberposts' => 1
-                    );
-                    $matched_by_entry = get_posts($args);
-                    if ( ! empty($matched_by_entry) ) {
-                        $contact_id = $matched_by_entry[0];
-                    } else if ( $email !== 'Unknown' ) {
-                        // First check _qb_raw_email
-                        $args = array(
-                            'post_type'  => 'questbook_contact',
-                            'meta_key'   => '_qb_raw_email',
-                            'meta_value' => $email,
-                            'fields'     => 'ids',
-                            'numberposts' => 1
-                        );
-                        $matched = get_posts($args);
-                        if ( ! empty($matched) ) {
-                            $contact_id = $matched[0];
+                    if ( $email !== 'Unknown' ) {
+                        $matched = $wpdb->get_var( $wpdb->prepare("SELECT id FROM {$contacts_table} WHERE email = %s LIMIT 1", $email) );
+                        if ( $matched ) {
+                            $contact_id = (int) $matched;
                         } else {
-                            // Check if a wp_user exists with this email
                             $user = get_user_by( 'email', $email );
                             if ( $user ) {
-                                 $args = array(
-                                    'post_type'  => 'questbook_contact',
-                                    'meta_key'   => '_qb_user_id',
-                                    'meta_value' => $user->ID,
-                                    'fields'     => 'ids',
-                                    'numberposts' => 1
-                                );
-                                $matched = get_posts( $args );
-                                if ( ! empty($matched) ) {
-                                    $contact_id = $matched[0];
-                                }
+                                $matched = $wpdb->get_var( $wpdb->prepare("SELECT id FROM {$contacts_table} WHERE wp_user_id = %d LIMIT 1", $user->ID) );
+                                if ( $matched ) $contact_id = (int) $matched;
                             }
                         }
                     }
                     
                     $logs[] = array(
                         'id'         => 'forminator_' . $entry->entry_id,
-                        'contact_id' => $contact_id, // Linked dynamically or 0
+                        'contact_id' => (string) $contact_id,
                         'contact_name'=> $name . ( $email !== 'Unknown' ? " ($email)" : '' ),
                         'title'      => 'Forminator Form #' . $form_id,
                         'content'    => implode( "\n", $content_parts ),
@@ -1188,14 +1375,13 @@ class Xophz_Compass_Quests_REST {
                         'direction'  => 'inbound',
                         'internal'   => false,
                         'promoted_to'=> '',
-                        'is_read'    => false, // We could track read state if needed
+                        'is_read'    => false,
                         'date'       => $entry->date_created,
                     );
                 }
             }
         }
         
-        // Sort all by date descending
         usort( $logs, function($a, $b) {
             return strtotime($b['date']) - strtotime($a['date']);
         });
@@ -1204,67 +1390,185 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function mark_contact_logs_read( WP_REST_Request $request ) {
+        global $wpdb;
+        $logs_table = $wpdb->prefix . 'xophz_qb_logs';
         $id = $request->get_param( 'id' );
-        $args = array(
-            'post_type'      => 'questbook_log',
-            'posts_per_page' => -1,
-            'meta_query'     => array(
-                'relation' => 'AND',
-                array(
-                    'key'   => '_qb_contact_id',
-                    'value' => $id,
-                ),
-                array(
-                    'key'   => '_qb_direction',
-                    'value' => 'inbound',
-                ),
-                array(
-                    'key'     => '_qb_is_read',
-                    'value'   => 'no',
-                    'compare' => '='
-                )
-            )
-        );
-
-        $unread_logs = get_posts( $args );
-        foreach ( $unread_logs as $log ) {
-            update_post_meta( $log->ID, '_qb_is_read', 'yes' );
+        
+        // Find all unread inbound logs for this contact
+        $unread = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, meta_data FROM {$logs_table} WHERE contact_id = %d",
+            $id
+        ));
+        
+        $marked = 0;
+        foreach ( $unread as $log ) {
+            $meta = json_decode($log->meta_data, true) ?: array();
+            $isInboundUnread = ($meta['direction'] ?? '') === 'inbound' && ($meta['is_read'] ?? 'yes') === 'no';
+            if ( $isInboundUnread ) {
+                $meta['is_read'] = 'yes';
+                $wpdb->update($logs_table, array('meta_data' => wp_json_encode($meta)), array('id' => $log->id));
+                $marked++;
+            }
         }
 
-        return rest_ensure_response( array( 'success' => true, 'marked' => count($unread_logs) ) );
+        return rest_ensure_response( array( 'success' => true, 'marked' => $marked ) );
+    }
+
+    // --- Deals ---
+
+    public function get_deals( WP_REST_Request $request ) {
+        global $wpdb;
+        $deals_table = $wpdb->prefix . 'xophz_qb_deals';
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+
+        $page = max(1, (int) $request->get_param('page') ?: 1);
+        $per_page = min(100, max(1, (int) $request->get_param('per_page') ?: 25));
+        $offset = ($page - 1) * $per_page;
+        $search = sanitize_text_field( $request->get_param('search') ?: '' );
+        $stage = sanitize_text_field( $request->get_param('stage') ?: '' );
+
+        $where = '1=1';
+        $params = array();
+
+        if ( $search ) {
+            $where .= ' AND (d.title LIKE %s OR c.first_name LIKE %s OR c.last_name LIKE %s)';
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+        if ( $stage ) {
+            $where .= ' AND d.stage = %s';
+            $params[] = $stage;
+        }
+
+        $count_sql = "SELECT COUNT(*) FROM {$deals_table} d LEFT JOIN {$contacts_table} c ON d.contact_id = c.id WHERE {$where}";
+        $total = $wpdb->get_var( $params ? $wpdb->prepare($count_sql, ...$params) : $count_sql );
+
+        $sql = "SELECT d.*, CONCAT(c.first_name, ' ', c.last_name) as contact_name, c.email as contact_email 
+                FROM {$deals_table} d LEFT JOIN {$contacts_table} c ON d.contact_id = c.id 
+                WHERE {$where} ORDER BY d.created_at DESC LIMIT %d OFFSET %d";
+        $params[] = $per_page;
+        $params[] = $offset;
+
+        $deals = $wpdb->get_results( $wpdb->prepare($sql, ...$params) );
+
+        $formatted = array();
+        foreach ($deals as $deal) {
+            $formatted[] = array(
+                'id' => (int) $deal->id,
+                'title' => $deal->title,
+                'contact_id' => (int) $deal->contact_id,
+                'contact_name' => trim($deal->contact_name),
+                'contact_email' => $deal->contact_email,
+                'amount' => (float) $deal->amount,
+                'stage' => $deal->stage,
+                'description' => $deal->description,
+                'created_at' => $deal->created_at,
+                'updated_at' => $deal->updated_at,
+            );
+        }
+
+        $response = rest_ensure_response($formatted);
+        $response->header('X-WP-Total', (int) $total);
+        $response->header('X-WP-TotalPages', ceil($total / $per_page));
+        return $response;
+    }
+
+    public function create_deal( WP_REST_Request $request ) {
+        global $wpdb;
+        $deals_table = $wpdb->prefix . 'xophz_qb_deals';
+        $params = $request->get_json_params();
+
+        $data = array(
+            'title'       => sanitize_text_field( $params['title'] ?? '' ),
+            'contact_id'  => absint( $params['contact_id'] ?? 0 ),
+            'amount'      => floatval( $params['amount'] ?? 0 ),
+            'stage'       => sanitize_text_field( $params['stage'] ?? 'New' ),
+            'description' => sanitize_textarea_field( $params['description'] ?? '' ),
+            'created_at'  => current_time('mysql'),
+            'updated_at'  => current_time('mysql'),
+        );
+
+        if ( empty($data['title']) ) {
+            return new WP_Error('missing_title', 'Deal title is required', array('status' => 400));
+        }
+
+        $inserted = $wpdb->insert($deals_table, $data);
+        if ( false === $inserted ) {
+            // Attempt self-healing schema upgrade via dbDelta if column or table was missing
+            Xophz_Compass_Quests_Schema::create_tables();
+            $inserted = $wpdb->insert($deals_table, $data);
+        }
+
+        if ( false === $inserted ) {
+            return new WP_Error('db_error', 'Failed to insert deal into database: ' . $wpdb->last_error, array('status' => 500));
+        }
+
+        $data['id'] = (int) $wpdb->insert_id;
+        return rest_ensure_response($data);
+    }
+
+    public function update_deal( WP_REST_Request $request ) {
+        global $wpdb;
+        $deals_table = $wpdb->prefix . 'xophz_qb_deals';
+        $id = (int) $request->get_param('id');
+        $params = $request->get_json_params();
+
+        $existing = $wpdb->get_row( $wpdb->prepare("SELECT id FROM {$deals_table} WHERE id = %d", $id) );
+        if ( ! $existing ) {
+            return new WP_Error('not_found', 'Deal not found', array('status' => 404));
+        }
+
+        $update = array( 'updated_at' => current_time('mysql') );
+        if ( isset($params['title']) )       $update['title']       = sanitize_text_field($params['title']);
+        if ( isset($params['contact_id']) )  $update['contact_id']  = absint($params['contact_id']);
+        if ( isset($params['amount']) )      $update['amount']      = floatval($params['amount']);
+        if ( isset($params['stage']) )       $update['stage']       = sanitize_text_field($params['stage']);
+        if ( isset($params['description']) ) $update['description'] = sanitize_textarea_field($params['description']);
+
+        $wpdb->update($deals_table, $update, array('id' => $id));
+
+        return rest_ensure_response(array('success' => true, 'id' => $id));
+    }
+
+    public function delete_deal( WP_REST_Request $request ) {
+        global $wpdb;
+        $deals_table = $wpdb->prefix . 'xophz_qb_deals';
+        $id = (int) $request->get_param('id');
+
+        $wpdb->delete($deals_table, array('id' => $id));
+        return rest_ensure_response(array('success' => true));
     }
 
     // --- Calendar Events ---
 
     public function get_events( WP_REST_Request $request ) {
-        $args = array(
-            'post_type'      => 'questbook_event',
-            'posts_per_page' => -1,
-        );
-
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_tasks';
+        
         $contact_id = $request->get_param( 'contact_id' );
+        $where = "WHERE 1=1";
+        $params = array();
+
         if ( ! empty( $contact_id ) ) {
-            $args['meta_query'] = array(
-                array(
-                    'key'     => '_qb_contact_id',
-                    'value'   => $contact_id,
-                    'compare' => '='
-                )
-            );
+            $where .= " AND contact_id = %d";
+            $params[] = $contact_id;
         }
 
-        $events = get_posts( $args );
+        $query = "SELECT * FROM {$table} {$where} ORDER BY due_date ASC";
+        $tasks = $wpdb->get_results( empty($params) ? $query : $wpdb->prepare( $query, $params ) );
+        
         $formatted = array();
-
-        foreach ( $events as $event ) {
+        foreach ( $tasks as $task ) {
             $formatted[] = array(
-                'id'          => (string) $event->ID,
-                'title'       => $event->post_title,
-                'date'        => get_post_meta( $event->ID, '_qb_event_date', true ),
-                'time'        => get_post_meta( $event->ID, '_qb_event_time', true ),
-                'description' => get_post_meta( $event->ID, '_qb_event_desc', true ),
-                'type'        => get_post_meta( $event->ID, '_qb_event_type', true ),
-                'contact_id'  => get_post_meta( $event->ID, '_qb_contact_id', true ),
+                'id'          => (string) $task->id,
+                'title'       => $task->title,
+                'date'        => date('Y-m-d', strtotime($task->due_date)),
+                'time'        => date('H:i:s', strtotime($task->due_date)),
+                'description' => '', // Tasks table could be expanded to have desc, for now empty
+                'type'        => $task->status,
+                'contact_id'  => (string) $task->contact_id,
             );
         }
 
@@ -1272,63 +1576,61 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function create_event( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_tasks';
         $params = $request->get_json_params();
 
-        $post_data = array(
-            'post_title'  => sanitize_text_field( $params['title'] ),
-            'post_type'   => 'questbook_event',
-            'post_status' => 'publish',
-        );
-
-        $post_id = wp_insert_post( $post_data );
-
-        if ( is_wp_error( $post_id ) ) {
-            return $post_id;
+        $due_date = null;
+        if ( !empty($params['date']) && !empty($params['time']) ) {
+            $due_date = date('Y-m-d H:i:s', strtotime($params['date'] . ' ' . $params['time']));
         }
 
-        $this->update_event_meta( $post_id, $params );
+        $data = array(
+            'title' => sanitize_text_field( $params['title'] ?? 'New Task' ),
+            'contact_id' => absint( $params['contact_id'] ?? 0 ),
+            'status' => sanitize_text_field( $params['type'] ?? 'Pending' ),
+            'due_date' => $due_date
+        );
 
-        return rest_ensure_response( array( 'success' => true, 'id' => (string) $post_id ) );
+        $result = $wpdb->insert( $table, $data );
+
+        if ( ! $result ) {
+            return new WP_Error( 'insert_failed', 'Could not create task', array( 'status' => 500 ) );
+        }
+
+        return rest_ensure_response( array( 'success' => true, 'id' => (string) $wpdb->insert_id ) );
     }
 
     public function update_event( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_tasks';
+        
         $id = $request->get_param( 'id' );
         $params = $request->get_json_params();
 
-        if ( isset( $params['title'] ) ) {
-            wp_update_post( array(
-                'ID'         => $id,
-                'post_title' => sanitize_text_field( $params['title'] ),
-            ) );
+        $data = array();
+        if ( isset( $params['title'] ) ) $data['title'] = sanitize_text_field( $params['title'] );
+        if ( isset( $params['contact_id'] ) ) $data['contact_id'] = absint( $params['contact_id'] );
+        if ( isset( $params['type'] ) ) $data['status'] = sanitize_text_field( $params['type'] );
+        
+        if ( isset($params['date']) && isset($params['time']) ) {
+            $data['due_date'] = date('Y-m-d H:i:s', strtotime($params['date'] . ' ' . $params['time']));
         }
 
-        $this->update_event_meta( $id, $params );
+        if ( !empty($data) ) {
+            $wpdb->update( $table, $data, array( 'id' => $id ) );
+        }
 
         return rest_ensure_response( array( 'success' => true ) );
     }
 
     public function delete_event( WP_REST_Request $request ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'xophz_qb_tasks';
         $id = $request->get_param( 'id' );
-        wp_delete_post( $id, true );
+        
+        $wpdb->delete( $table, array( 'id' => $id ) );
         return rest_ensure_response( array( 'deleted' => true ) );
-    }
-
-    private function update_event_meta( $post_id, $params ) {
-        if ( isset( $params['date'] ) ) {
-            update_post_meta( $post_id, '_qb_event_date', sanitize_text_field( $params['date'] ) );
-        }
-        if ( isset( $params['time'] ) ) {
-            update_post_meta( $post_id, '_qb_event_time', sanitize_text_field( $params['time'] ) );
-        }
-        if ( isset( $params['description'] ) ) {
-            update_post_meta( $post_id, '_qb_event_desc', sanitize_textarea_field( $params['description'] ) );
-        }
-        if ( isset( $params['type'] ) ) {
-            update_post_meta( $post_id, '_qb_event_type', sanitize_text_field( $params['type'] ) );
-        }
-        if ( isset( $params['contact_id'] ) ) {
-            update_post_meta( $post_id, '_qb_contact_id', absint( $params['contact_id'] ) );
-        }
     }
 
     // --- Quests CRUD --- //
@@ -1481,33 +1783,26 @@ class Xophz_Compass_Quests_REST {
     }
 
     public function get_me_client_data( WP_REST_Request $request ) {
+        global $wpdb;
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+        
         $user_id = get_current_user_id();
         if ( ! $user_id ) {
             return new WP_Error( 'not_logged_in', 'User is not logged in.', array( 'status' => 401 ) );
         }
 
-        $contact_query = new WP_Query( array(
-            'post_type' => 'questbook_contact',
-            'posts_per_page' => 1,
-            'meta_query' => array(
-                array(
-                    'key' => '_qb_user_id',
-                    'value' => $user_id,
-                )
-            )
-        ) );
+        $contact = $wpdb->get_row( $wpdb->prepare("SELECT * FROM {$contacts_table} WHERE wp_user_id = %d LIMIT 1", $user_id) );
 
-        if ( empty( $contact_query->posts ) ) {
+        if ( ! $contact ) {
             return rest_ensure_response( array(
                 'contact' => null,
                 'quests' => array(),
             ) );
         }
 
-        $contact = $contact_query->posts[0];
         $formatted_contact = $this->format_contact( $contact );
 
-        $request->set_param( 'id', $contact->ID );
+        $request->set_param( 'id', $contact->id );
         $quests_response = $this->get_contact_quests( $request );
         $quests = array();
         if ( ! is_wp_error( $quests_response ) && method_exists( $quests_response, 'get_data' ) ) {

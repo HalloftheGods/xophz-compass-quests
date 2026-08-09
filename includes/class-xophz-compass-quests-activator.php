@@ -30,7 +30,8 @@ class Xophz_Compass_Quests_Activator {
 	 * @since    1.0.0
 	 */
 	public static function activate() {
-
+        require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-xophz-compass-quests-schema.php';
+        Xophz_Compass_Quests_Schema::install();
 	}
 
 }

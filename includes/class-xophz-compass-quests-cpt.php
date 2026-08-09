@@ -14,68 +14,7 @@ class Xophz_Compass_Quests_CPT {
 	 */
 	public function register_cpts() {
 
-		// 1. Register Contact CPT
-		$contact_labels = array(
-			'name'               => _x( 'Contacts', 'post type general name', 'xophz-compass-quests' ),
-			'singular_name'      => _x( 'Contact', 'post type singular name', 'xophz-compass-quests' ),
-			'menu_name'          => _x( 'Contacts', 'admin menu', 'xophz-compass-quests' ),
-			'name_admin_bar'     => _x( 'Contact', 'add new on admin bar', 'xophz-compass-quests' ),
-			'add_new'            => _x( 'Add New', 'contact', 'xophz-compass-quests' ),
-			'add_new_item'       => __( 'Add New Contact', 'xophz-compass-quests' ),
-			'new_item'           => __( 'New Contact', 'xophz-compass-quests' ),
-			'edit_item'          => __( 'Edit Contact', 'xophz-compass-quests' ),
-			'view_item'          => __( 'View Contact', 'xophz-compass-quests' ),
-			'all_items'          => __( 'All Contacts', 'xophz-compass-quests' ),
-			'search_items'       => __( 'Search Contacts', 'xophz-compass-quests' ),
-			'parent_item_colon'  => __( 'Parent Contacts:', 'xophz-compass-quests' ),
-			'not_found'          => __( 'No contacts found.', 'xophz-compass-quests' ),
-			'not_found_in_trash' => __( 'No contacts found in Trash.', 'xophz-compass-quests' )
-		);
-
-		$contact_args = array(
-			'labels'             => $contact_labels,
-			'description'        => __( 'Questbook CRM Contacts.', 'xophz-compass-quests' ),
-			'public'             => false,
-			'publicly_queryable' => false,
-			'show_ui'            => false, // We'll build our own UI in Vue
-			'show_in_menu'       => false,
-			'query_var'          => true,
-			'rewrite'            => array( 'slug' => 'questbook-contact' ),
-			'capability_type'    => 'post',
-			'has_archive'        => false,
-			'hierarchical'       => false,
-			'menu_position'      => null,
-			'supports'           => array( 'title' )
-		);
-
-		register_post_type( 'questbook_contact', $contact_args );
-
-		// 1.5 Register Contact Type Taxonomy
-		$taxonomy_labels = array(
-			'name'              => _x( 'Contact Types', 'taxonomy general name', 'xophz-compass-quests' ),
-			'singular_name'     => _x( 'Contact Type', 'taxonomy singular name', 'xophz-compass-quests' ),
-			'search_items'      => __( 'Search Contact Types', 'xophz-compass-quests' ),
-			'all_items'         => __( 'All Contact Types', 'xophz-compass-quests' ),
-			'parent_item'       => __( 'Parent Contact Type', 'xophz-compass-quests' ),
-			'parent_item_colon' => __( 'Parent Contact Type:', 'xophz-compass-quests' ),
-			'edit_item'         => __( 'Edit Contact Type', 'xophz-compass-quests' ),
-			'update_item'       => __( 'Update Contact Type', 'xophz-compass-quests' ),
-			'add_new_item'      => __( 'Add New Contact Type', 'xophz-compass-quests' ),
-			'new_item_name'     => __( 'New Contact Type Name', 'xophz-compass-quests' ),
-			'menu_name'         => __( 'Contact Type', 'xophz-compass-quests' ),
-		);
-
-		$taxonomy_args = array(
-			'hierarchical'      => true,
-			'labels'            => $taxonomy_labels,
-			'show_ui'           => false,
-			'show_admin_column' => false,
-			'query_var'         => true,
-			'show_in_rest'      => true,
-			'rewrite'           => array( 'slug' => 'qb-contact-type' ),
-		);
-
-		register_taxonomy( 'qb_contact_type', array( 'questbook_contact' ), $taxonomy_args );
+		// 1. Register Quest CPT (Others moved to Custom Tables)
 
 		// 2. Register Quest CPT
 		$quest_labels = array(
@@ -113,71 +52,6 @@ class Xophz_Compass_Quests_CPT {
 
 		register_post_type( 'questbook_quest', $quest_args );
 
-		// 3. Register Journey Log CPT
-		$log_labels = array(
-			'name'               => _x( 'Journey Logs', 'post type general name', 'xophz-compass-quests' ),
-			'singular_name'      => _x( 'Journey Log', 'post type singular name', 'xophz-compass-quests' )
-		);
-
-		$log_args = array(
-			'labels'             => $log_labels,
-			'description'        => __( 'Questbook Journey Logs.', 'xophz-compass-quests' ),
-			'public'             => false,
-			'publicly_queryable' => false,
-			'show_ui'            => false,
-			'show_in_menu'       => false,
-			'query_var'          => false,
-			'capability_type'    => 'post',
-			'has_archive'        => false,
-			'hierarchical'       => false,
-			'supports'           => array( 'title' )
-		);
-
-		register_post_type( 'questbook_log', $log_args );
-
-		// 4. Register Event CPT (Scheduler)
-		$event_labels = array(
-			'name'               => _x( 'Events', 'post type general name', 'xophz-compass-quests' ),
-			'singular_name'      => _x( 'Event', 'post type singular name', 'xophz-compass-quests' )
-		);
-
-		$event_args = array(
-			'labels'             => $event_labels,
-			'description'        => __( 'Questbook Calendar Events.', 'xophz-compass-quests' ),
-			'public'             => false,
-			'publicly_queryable' => false,
-			'show_ui'            => false,
-			'show_in_menu'       => false,
-			'query_var'          => false,
-			'capability_type'    => 'post',
-			'has_archive'        => false,
-			'hierarchical'       => false,
-			'supports'           => array( 'title' )
-		);
-
-		register_post_type( 'questbook_event', $event_args );
-
-		// 5. Register Board CPT (Pipeline)
-		$board_labels = array(
-			'name'               => _x( 'Boards', 'post type general name', 'xophz-compass-quests' ),
-			'singular_name'      => _x( 'Board', 'post type singular name', 'xophz-compass-quests' )
-		);
-
-		$board_args = array(
-			'labels'             => $board_labels,
-			'description'        => __( 'Questbook Pipeline Boards.', 'xophz-compass-quests' ),
-			'public'             => false,
-			'publicly_queryable' => false,
-			'show_ui'            => false,
-			'show_in_menu'       => false,
-			'query_var'          => false,
-			'capability_type'    => 'post',
-			'has_archive'        => false,
-			'hierarchical'       => false,
-			'supports'           => array( 'title' )
-		);
-
-		register_post_type( 'questbook_board', $board_args );
 	}
 
 	/**
@@ -283,20 +157,18 @@ class Xophz_Compass_Quests_CPT {
 	public function handle_goal_won( $wp_user_id, $goal_id, $goal_title ) {
 		if ( ! $wp_user_id ) return;
 
-		// 1. Find the Contact associated with this WP User
-		$contacts = get_posts( array(
-			'post_type' => 'questbook_contact',
-			'meta_key' => '_qb_user_id',
-			'meta_value' => $wp_user_id,
-			'posts_per_page' => 1
-		) );
+		global $wpdb;
+		$table_name = $wpdb->prefix . 'xophz_qb_contacts';
 
-		if ( empty( $contacts ) ) return;
-		$contact_id = $contacts[0]->ID;
+		// 1. Find the Contact associated with this WP User
+		$contact = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table_name} WHERE wp_user_id = %d LIMIT 1", $wp_user_id));
+
+		if ( empty( $contact ) ) return;
+		$contact_id = $contact->id;
 
 		// 2. Fetch their active quests
-		$active_quests_json = get_post_meta( $contact_id, '_qb_active_quests', true );
-		$active_quests = empty( $active_quests_json ) ? array() : json_decode( $active_quests_json, true );
+		$meta_data = json_decode($contact->meta_data, true) ?: array();
+		$active_quests = $meta_data['active_quests'] ?? array();
 		if ( empty( $active_quests ) ) return;
 
 		$quests_updated = false;
@@ -336,7 +208,12 @@ class Xophz_Compass_Quests_CPT {
 
 		// 4. Save updates if any auto-completions occurred
 		if ( $quests_updated ) {
-			update_post_meta( $contact_id, '_qb_active_quests', wp_json_encode( $active_quests ) );
+			$meta_data['active_quests'] = $active_quests;
+			$wpdb->update(
+				$table_name,
+				array('meta_data' => wp_json_encode($meta_data)),
+				array('id' => $contact_id)
+			);
 		}
 	}
 }

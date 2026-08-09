@@ -15,7 +15,7 @@
  * @wordpress-plugin
  * Category:          Command Deck
  * Group:             CRM
- * Plugin Name:       Xophz CRM Questbook 
+ * Plugin Name:       Xophz Questbook CRM 
  * Plugin URI:        https://github.com/HalloftheGods/xophz-compass-quests
  * Description:       Questbook is an all-in-one customer relation manager and user activity log.  
  * Version:           26.8.6.193
@@ -90,7 +90,7 @@ function run_xophz_compass_quests() {
     }
 
     function admin_notice_xophz_compass_quests() {
-      echo '<div class="error"><h2><strong>Xophz CRM Questbook</strong> requires Compass to run. It has self <strong>deactivated</strong>.</h2></div>';
+      echo '<div class="error"><h2><strong>Xophz Questbook CRM</strong> requires Compass to run. It has self <strong>deactivated</strong>.</h2></div>';
       if ( isset( $_GET['activate'] ) )
         unset( $_GET['activate'] );
     }

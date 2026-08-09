@@ -137,6 +137,12 @@ class Xophz_Compass_Quests {
 		 */
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-xophz-compass-quests-wpmudev.php';
 
+        /**
+         * Database schema and migrations.
+         */
+        require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-xophz-compass-quests-schema.php';
+        Xophz_Compass_Quests_Schema::install();
+
 		$this->loader = new Xophz_Compass_Quests_Loader();
 
 	}
@@ -183,9 +189,7 @@ class Xophz_Compass_Quests {
 		$this->loader->add_action( 'add_meta_boxes', $plugin_admin, 'add_questbook_assignment_meta_box', 10, 2 );
 		$this->loader->add_action( 'save_post', $plugin_admin, 'save_questbook_assignment_meta', 10, 2 );
 
-		// Autopilot Workflow Hook
-		$this->loader->add_action( 'save_post_questbook_log', $plugin_cpt, 'handle_workflow_triggers', 10, 3 );
-        
+	
         // Gamification / XP Hook
 		$this->loader->add_action( 'questbook_quest_completed', $plugin_cpt, 'handle_quest_completion', 10, 3 );
         $this->loader->add_action( 'xophz_compass_goal_won', $plugin_cpt, 'handle_goal_won', 10, 3 );
@@ -202,9 +206,52 @@ class Xophz_Compass_Quests {
 
 		$plugin_public = new Xophz_Compass_Quests_Public( $this->get_xophz_compass_quests(), $this->get_version() );
 
-		// $this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_styles' );
-		// $this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_scripts' );
+		$this->loader->add_action( 'user_register', $this, 'sync_new_wp_user' );
 
+	}
+
+	public function sync_new_wp_user( $user_id ) {
+		global $wpdb;
+		$contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+		$user = get_userdata( $user_id );
+		if ( ! $user ) return;
+
+		$existing = $wpdb->get_var( $wpdb->prepare(
+			"SELECT id FROM {$contacts_table} WHERE wp_user_id = %d OR email = %s",
+			$user_id,
+			$user->user_email
+		) );
+
+		if ( ! $existing ) {
+			$wp_first = get_user_meta( $user_id, 'first_name', true );
+			$wp_last  = get_user_meta( $user_id, 'last_name', true );
+
+			if ( empty( $wp_first ) && empty( $wp_last ) ) {
+				$display_name = trim( $user->display_name );
+				if ( ! empty( $display_name ) && strpos( $display_name, '@' ) === false ) {
+					$parts = explode( ' ', $display_name, 2 );
+					$wp_first = $parts[0];
+					$wp_last  = $parts[1] ?? '';
+				} else {
+					$wp_first = $user->user_login;
+					$wp_last  = '';
+				}
+			}
+
+			$wpdb->insert(
+				$contacts_table,
+				array(
+					'wp_user_id'  => $user_id,
+					'first_name'  => $wp_first,
+					'last_name'   => $wp_last,
+					'email'       => $user->user_email,
+					'lead_status' => 'Customer',
+					'source'      => 'WP User',
+					'created_at'  => current_time( 'mysql' ),
+					'updated_at'  => current_time( 'mysql' ),
+				)
+			);
+		}
 	}
 
 	/**
