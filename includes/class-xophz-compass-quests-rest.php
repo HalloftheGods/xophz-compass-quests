@@ -311,6 +311,39 @@ class Xophz_Compass_Quests_REST {
                 ),
             ) );
 
+            // Skip Tracing Intelligence & Contact Enrichment
+            register_rest_route( 'questbook/v1', '/skiptrace/query', array(
+                array(
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => array( $this, 'skiptrace_query' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/skiptrace/audit', array(
+                array(
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => array( $this, 'skiptrace_get_audit' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/enrich', array(
+                array(
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => array( $this, 'skiptrace_enrich_contact' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
+            register_rest_route( 'questbook/v1', '/contacts/(?P<id>\d+)/skiptrace', array(
+                array(
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => array( $this, 'skiptrace_get_contact_dossier' ),
+                    'permission_callback' => array( $this, 'check_permission' ),
+                ),
+            ) );
+
             register_rest_route( 'questbook/v1', '/quests', array(
                 array(
                     'methods'  => WP_REST_Server::READABLE,
@@ -638,7 +671,9 @@ class Xophz_Compass_Quests_REST {
             return new WP_Error( 'insert_failed', 'Could not create contact', array( 'status' => 500 ) );
         }
 
-        return $this->get_contact( new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $wpdb->insert_id ) );
+        $req = new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $wpdb->insert_id );
+        $req->set_param( 'id', $wpdb->insert_id );
+        return $this->get_contact( $req );
     }
 
     public function update_contact( WP_REST_Request $request ) {
@@ -678,7 +713,9 @@ class Xophz_Compass_Quests_REST {
 
         $wpdb->update($table, $data, array('id' => $id));
 
-        return $this->get_contact( new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $id ) );
+        $req = new WP_REST_Request( 'GET', '/questbook/v1/contacts/' . $id );
+        $req->set_param( 'id', $id );
+        return $this->get_contact( $req );
     }
 
     public function delete_contact( WP_REST_Request $request ) {
@@ -2130,5 +2167,83 @@ class Xophz_Compass_Quests_REST {
         }
 
         return rest_ensure_response($formatted);
+    }
+
+    /**
+     * Skip trace intelligence search endpoint.
+     */
+    public function skiptrace_query( WP_REST_Request $request ) {
+        $params = $request->get_json_params();
+        if ( empty( $params ) ) {
+            $params = $request->get_params();
+        }
+        $engine = new Xophz_Compass_Quests_Skiptrace();
+        $result = $engine->execute_query( $params );
+        if ( is_wp_error( $result ) ) {
+            return $result;
+        }
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * 1-Click enrich a Questbook contact.
+     */
+    public function skiptrace_enrich_contact( WP_REST_Request $request ) {
+        $contact_id = (int) $request['id'];
+        $params     = $request->get_json_params();
+        $purpose    = ! empty( $params['permissiblePurpose'] ) ? sanitize_text_field( $params['permissiblePurpose'] ) : 'legal_due_diligence';
+
+        $engine = new Xophz_Compass_Quests_Skiptrace();
+        $result = $engine->enrich_contact( $contact_id, $purpose );
+        if ( is_wp_error( $result ) ) {
+            return $result;
+        }
+        return rest_ensure_response( $result );
+    }
+
+    /**
+     * Get stored skip trace dossier for a contact.
+     */
+    public function skiptrace_get_contact_dossier( WP_REST_Request $request ) {
+        global $wpdb;
+        $contact_id = (int) $request['id'];
+        $table      = $wpdb->prefix . 'xophz_qb_contacts';
+        $contact    = $wpdb->get_row( $wpdb->prepare( "SELECT meta_data FROM {$table} WHERE id = %d", $contact_id ) );
+
+        if ( $contact ) {
+            $meta = json_decode( $contact->meta_data, true ) ?: array();
+            if ( ! empty( $meta['skiptrace_dossier'] ) ) {
+                return rest_ensure_response( array(
+                    'hasDossier' => true,
+                    'dossier'    => $meta['skiptrace_dossier'],
+                    'updatedAt'  => $meta['skiptrace_updated_at'] ?? current_time( 'mysql' ),
+                    'confidence' => $meta['skiptrace_confidence'] ?? 95,
+                ) );
+            }
+        }
+
+        $dossier_raw = get_post_meta( $contact_id, '_qb_skiptrace_dossier', true );
+        if ( ! empty( $dossier_raw ) ) {
+            $dossier = json_decode( $dossier_raw, true );
+            return rest_ensure_response( array(
+                'hasDossier' => true,
+                'dossier'    => $dossier,
+                'updatedAt'  => get_post_meta( $contact_id, '_qb_skiptrace_updated_at', true ),
+                'confidence' => get_post_meta( $contact_id, '_qb_skiptrace_confidence', true ),
+            ) );
+        }
+
+        return rest_ensure_response( array(
+            'hasDossier' => false,
+            'dossier'    => null,
+        ) );
+    }
+
+    /**
+     * Get cryptographic audit trail logs.
+     */
+    public function skiptrace_get_audit( WP_REST_Request $request ) {
+        $engine = new Xophz_Compass_Quests_Skiptrace();
+        return rest_ensure_response( $engine->get_audit_trail() );
     }
 }

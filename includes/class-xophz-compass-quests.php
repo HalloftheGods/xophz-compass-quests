@@ -138,6 +138,17 @@ class Xophz_Compass_Quests {
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-xophz-compass-quests-wpmudev.php';
 
         /**
+		 * The class responsible for Skip Tracing & Contact Enrichment.
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-xophz-compass-quests-skiptrace.php';
+
+        /**
+		 * The class responsible for Questbook CRM Connectors (Settings -> Connectors).
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-xophz-compass-quests-connectors.php';
+		Xophz_Compass_Quests_Connectors::init();
+
+        /**
          * Database schema and migrations.
          */
         require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-xophz-compass-quests-schema.php';
