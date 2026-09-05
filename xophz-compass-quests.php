@@ -18,7 +18,7 @@
  * Plugin Name:       Xophz Questbook CRM 
  * Plugin URI:        https://github.com/HalloftheGods/xophz-compass-quests
  * Description:       Questbook is an all-in-one customer relation manager and user activity log.  
- * Version:           26.9.4-181
+ * Version:           26.9.5
  * Tests :           1.0.0
  * Author:            Hall of the Gods, Inc. 
  * Author URI:        https://youmeos.com/
@@ -39,7 +39,7 @@ if ( ! defined( 'WPINC' ) ) {
  * Start at version 1.0.0 and use SemVer - https://semver.org
  * Rename this for your plugin and update it as you release new versions.
  */
-define( 'XOPHZ_COMPASS_QUESTS_VERSION', '26.9.4-181' );
+define( 'XOPHZ_COMPASS_QUESTS_VERSION', '26.9.5' );
 
 /**
  * The code that runs during plugin activation.
