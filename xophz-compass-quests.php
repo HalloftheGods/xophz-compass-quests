@@ -20,8 +20,8 @@
  * Description:       Questbook is an all-in-one customer relation manager and user activity log.  
  * Version:           26.9.5
  * Tests :           1.0.0
- * Author:            Hall of the Gods, Inc. 
- * Author URI:        https://youmeos.com/
+ * Author:            My Compass Consulting 
+ * Author URI:        https://mycompassconsulting.com/
  * License:           GPL-2.0+
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
  * Text Domain:       xophz-compass-quests
