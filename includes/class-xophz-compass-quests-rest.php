@@ -655,7 +655,7 @@ class Xophz_Compass_Quests_REST {
             'email' => sanitize_email($params['email'] ?? ''),
             'phone' => sanitize_text_field($params['phone'] ?? ''),
             'source' => sanitize_text_field($params['source'] ?? 'Manual'),
-            'lead_status' => sanitize_text_field($params['stage'] ?? 'New Lead'),
+            'lead_status' => sanitize_text_field($params['lead_status'] ?? ( $params['stage'] ?? 'New Lead' )),
             'meta_data' => wp_json_encode(array(
                 'notes' => sanitize_textarea_field($params['notes'] ?? ''),
                 'company' => sanitize_text_field($params['company'] ?? ''),
@@ -696,7 +696,8 @@ class Xophz_Compass_Quests_REST {
         }
         if (isset($params['email'])) $data['email'] = sanitize_email($params['email']);
         if (isset($params['phone'])) $data['phone'] = sanitize_text_field($params['phone']);
-        if (isset($params['stage'])) $data['lead_status'] = sanitize_text_field($params['stage']);
+        $stage = $params['lead_status'] ?? ( $params['stage'] ?? null );
+        if ($stage !== null && $stage !== '') $data['lead_status'] = sanitize_text_field($stage);
         if (isset($params['source'])) $data['source'] = sanitize_text_field($params['source']);
         if (isset($params['user_id'])) $data['wp_user_id'] = absint($params['user_id']);
         if (array_key_exists('company_id', $params)) $data['company_id'] = absint($params['company_id']);
@@ -704,6 +705,9 @@ class Xophz_Compass_Quests_REST {
         $meta = json_decode($existing->meta_data, true) ?: array();
         if (isset($params['notes'])) $meta['notes'] = sanitize_textarea_field($params['notes']);
         if (isset($params['company'])) $meta['company'] = sanitize_text_field($params['company']);
+        foreach ( array('address', 'city', 'state', 'zip') as $addr_key ) {
+            if (isset($params[$addr_key])) $meta[$addr_key] = sanitize_text_field($params[$addr_key]);
+        }
         if (isset($params['servicePackage'])) $meta['servicePackage'] = sanitize_text_field($params['servicePackage']);
         if (isset($params['paymentStatus'])) $meta['paymentStatus'] = sanitize_text_field($params['paymentStatus']);
         if (isset($params['retainer'])) $meta['retainer'] = sanitize_text_field($params['retainer']);
@@ -822,6 +826,12 @@ class Xophz_Compass_Quests_REST {
             'email'           => $email,
             'phone'           => $contact->phone,
             'stage'           => $contact->lead_status,
+            'lead_status'     => $contact->lead_status,
+            'address'         => $meta['address'] ?? '',
+            'city'            => $meta['city'] ?? '',
+            'state'           => $meta['state'] ?? '',
+            'zip'             => $meta['zip'] ?? '',
+            'created_at'      => $contact->created_at,
             'company_id'      => (int) $contact->company_id,
             'company'         => $meta['company'] ?? '',
             'servicePackage'  => $meta['servicePackage'] ?? 'COMPASS Executive Consulting',
@@ -1625,33 +1635,70 @@ class Xophz_Compass_Quests_REST {
 
     // --- Calendar Events ---
 
+    /**
+     * Normalise an event payload into task-table columns.
+     * Date-only events are stored at 00:00:00 and flagged all_day so they are never lost.
+     */
+    private function event_columns( array $params, bool $partial = false ) {
+        $data = array();
+        if ( ! $partial || isset( $params['title'] ) ) {
+            $title = sanitize_text_field( $params['title'] ?? '' );
+            $data['title'] = $title !== '' ? $title : 'New Event';
+        }
+        if ( ! $partial || isset( $params['contact_id'] ) ) {
+            $data['contact_id'] = absint( $params['contact_id'] ?? 0 );
+        }
+        if ( ! $partial || isset( $params['type'] ) ) {
+            $data['status'] = sanitize_text_field( $params['type'] ?? 'meeting' );
+        }
+        if ( ! $partial || isset( $params['description'] ) ) {
+            $data['description'] = sanitize_textarea_field( $params['description'] ?? '' );
+        }
+        if ( ! empty( $params['date'] ) ) {
+            $time    = ! empty( $params['time'] ) ? $params['time'] : '00:00:00';
+            $start   = strtotime( $params['date'] . ' ' . $time );
+            if ( $start ) {
+                $data['due_date'] = date( 'Y-m-d H:i:s', $start );
+                $data['all_day']  = empty( $params['time'] ) ? 1 : 0;
+                $end = ( ! empty( $params['endTime'] ) ) ? strtotime( $params['date'] . ' ' . $params['endTime'] ) : false;
+                $data['end_date'] = ( $end && $end > $start ) ? date( 'Y-m-d H:i:s', $end ) : null;
+            }
+        }
+        return $data;
+    }
+
+    private function format_event( $task ) {
+        $has_due = ! empty( $task->due_date ) && strpos( $task->due_date, '0000' ) !== 0;
+        $start   = $has_due ? strtotime( $task->due_date ) : false;
+        $end     = ! empty( $task->end_date ) ? strtotime( $task->end_date ) : false;
+        $all_day = ! empty( $task->all_day );
+        return array(
+            'id'          => (string) $task->id,
+            'title'       => $task->title,
+            'date'        => $start ? date( 'Y-m-d', $start ) : '',
+            'time'        => ( $start && ! $all_day ) ? date( 'H:i:s', $start ) : '',
+            'endTime'     => ( $end && ! $all_day ) ? date( 'H:i:s', $end ) : '',
+            'description' => (string) ( $task->description ?? '' ),
+            'type'        => $task->status,
+            'contact_id'  => (string) $task->contact_id,
+            'all_day'     => $all_day,
+        );
+    }
+
     public function get_events( WP_REST_Request $request ) {
         global $wpdb;
         $table = $wpdb->prefix . 'xophz_qb_tasks';
-        
-        $contact_id = $request->get_param( 'contact_id' );
-        $where = "WHERE 1=1";
-        $params = array();
 
-        if ( ! empty( $contact_id ) ) {
-            $where .= " AND contact_id = %d";
-            $params[] = $contact_id;
+        $contact_id = absint( $request->get_param( 'contact_id' ) );
+        $query = "SELECT * FROM {$table}";
+        if ( $contact_id ) {
+            $query = $wpdb->prepare( "SELECT * FROM {$table} WHERE contact_id = %d", $contact_id );
         }
+        $tasks = $wpdb->get_results( $query . ' ORDER BY due_date ASC' );
 
-        $query = "SELECT * FROM {$table} {$where} ORDER BY due_date ASC";
-        $tasks = $wpdb->get_results( empty($params) ? $query : $wpdb->prepare( $query, $params ) );
-        
         $formatted = array();
-        foreach ( $tasks as $task ) {
-            $formatted[] = array(
-                'id'          => (string) $task->id,
-                'title'       => $task->title,
-                'date'        => date('Y-m-d', strtotime($task->due_date)),
-                'time'        => date('H:i:s', strtotime($task->due_date)),
-                'description' => '', // Tasks table could be expanded to have desc, for now empty
-                'type'        => $task->status,
-                'contact_id'  => (string) $task->contact_id,
-            );
+        foreach ( (array) $tasks as $task ) {
+            $formatted[] = $this->format_event( $task );
         }
 
         return rest_ensure_response( $formatted );
@@ -1659,58 +1706,54 @@ class Xophz_Compass_Quests_REST {
 
     public function create_event( WP_REST_Request $request ) {
         global $wpdb;
-        $table = $wpdb->prefix . 'xophz_qb_tasks';
+        $table  = $wpdb->prefix . 'xophz_qb_tasks';
         $params = $request->get_json_params();
+        if ( ! is_array( $params ) ) $params = array();
 
-        $due_date = null;
-        if ( !empty($params['date']) && !empty($params['time']) ) {
-            $due_date = date('Y-m-d H:i:s', strtotime($params['date'] . ' ' . $params['time']));
+        if ( empty( $params['date'] ) ) {
+            return new WP_Error( 'missing_date', 'A date is required', array( 'status' => 400 ) );
         }
 
-        $data = array(
-            'title' => sanitize_text_field( $params['title'] ?? 'New Task' ),
-            'contact_id' => absint( $params['contact_id'] ?? 0 ),
-            'status' => sanitize_text_field( $params['type'] ?? 'Pending' ),
-            'due_date' => $due_date
-        );
-
+        $data   = $this->event_columns( $params );
         $result = $wpdb->insert( $table, $data );
 
         if ( ! $result ) {
-            return new WP_Error( 'insert_failed', 'Could not create task', array( 'status' => 500 ) );
+            return new WP_Error( 'insert_failed', 'Could not create event: ' . $wpdb->last_error, array( 'status' => 500 ) );
         }
 
-        return rest_ensure_response( array( 'success' => true, 'id' => (string) $wpdb->insert_id ) );
+        $task = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE id = %d", $wpdb->insert_id ) );
+        return rest_ensure_response( array(
+            'success' => true,
+            'id'      => (string) $wpdb->insert_id,
+            'event'   => $task ? $this->format_event( $task ) : null,
+        ) );
     }
 
     public function update_event( WP_REST_Request $request ) {
         global $wpdb;
         $table = $wpdb->prefix . 'xophz_qb_tasks';
-        
-        $id = $request->get_param( 'id' );
+
+        $id     = absint( $request->get_param( 'id' ) );
         $params = $request->get_json_params();
+        if ( ! is_array( $params ) ) $params = array();
 
-        $data = array();
-        if ( isset( $params['title'] ) ) $data['title'] = sanitize_text_field( $params['title'] );
-        if ( isset( $params['contact_id'] ) ) $data['contact_id'] = absint( $params['contact_id'] );
-        if ( isset( $params['type'] ) ) $data['status'] = sanitize_text_field( $params['type'] );
-        
-        if ( isset($params['date']) && isset($params['time']) ) {
-            $data['due_date'] = date('Y-m-d H:i:s', strtotime($params['date'] . ' ' . $params['time']));
-        }
-
-        if ( !empty($data) ) {
+        $data = $this->event_columns( $params, true );
+        if ( ! empty( $data ) ) {
             $wpdb->update( $table, $data, array( 'id' => $id ) );
         }
 
-        return rest_ensure_response( array( 'success' => true ) );
+        $task = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE id = %d", $id ) );
+        return rest_ensure_response( array(
+            'success' => true,
+            'event'   => $task ? $this->format_event( $task ) : null,
+        ) );
     }
 
     public function delete_event( WP_REST_Request $request ) {
         global $wpdb;
         $table = $wpdb->prefix . 'xophz_qb_tasks';
-        $id = $request->get_param( 'id' );
-        
+        $id = absint( $request->get_param( 'id' ) );
+
         $wpdb->delete( $table, array( 'id' => $id ) );
         return rest_ensure_response( array( 'deleted' => true ) );
     }

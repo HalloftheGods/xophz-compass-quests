@@ -12,7 +12,7 @@ class Xophz_Compass_Quests_Schema {
      * The database version, used to determine if an upgrade is needed.
      * Increment this version whenever the schema changes.
      */
-    const DB_VERSION = '1.0.1';
+    const DB_VERSION = '1.1.0';
 
     /**
      * Run the schema installation/upgrade process.
@@ -104,6 +104,9 @@ class Xophz_Compass_Quests_Schema {
             deal_id bigint(20) unsigned DEFAULT 0,
             status varchar(50) DEFAULT 'Pending' NOT NULL,
             due_date datetime NULL,
+            end_date datetime NULL,
+            all_day tinyint(1) DEFAULT 0 NOT NULL,
+            description text NULL,
             assigned_to bigint(20) unsigned DEFAULT 0,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
