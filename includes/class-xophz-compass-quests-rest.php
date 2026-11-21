@@ -648,17 +648,20 @@ class Xophz_Compass_Quests_REST {
         $params = $request->get_json_params();
         
         $name_parts = explode(' ', sanitize_text_field($params['name'] ?? 'New Lead'), 2);
+        $company = sanitize_text_field($params['company'] ?? '');
+        $email = sanitize_email(trim($params['email'] ?? ''));
         
         $data = array(
             'first_name' => $name_parts[0],
             'last_name' => $name_parts[1] ?? '',
-            'email' => sanitize_email($params['email'] ?? ''),
+            'email' => $email,
             'phone' => sanitize_text_field($params['phone'] ?? ''),
+            'company' => $company,
             'source' => sanitize_text_field($params['source'] ?? 'Manual'),
             'lead_status' => sanitize_text_field($params['lead_status'] ?? ( $params['stage'] ?? 'New Lead' )),
             'meta_data' => wp_json_encode(array(
                 'notes' => sanitize_textarea_field($params['notes'] ?? ''),
-                'company' => sanitize_text_field($params['company'] ?? ''),
+                'company' => $company,
             ))
         );
 
@@ -694,13 +697,17 @@ class Xophz_Compass_Quests_REST {
             $data['first_name'] = $name_parts[0];
             $data['last_name'] = $name_parts[1] ?? '';
         }
-        if (isset($params['email'])) $data['email'] = sanitize_email($params['email']);
+        if (isset($params['email'])) $data['email'] = sanitize_email(trim($params['email']));
         if (isset($params['phone'])) $data['phone'] = sanitize_text_field($params['phone']);
         $stage = $params['lead_status'] ?? ( $params['stage'] ?? null );
         if ($stage !== null && $stage !== '') $data['lead_status'] = sanitize_text_field($stage);
         if (isset($params['source'])) $data['source'] = sanitize_text_field($params['source']);
         if (isset($params['user_id'])) $data['wp_user_id'] = absint($params['user_id']);
         if (array_key_exists('company_id', $params)) $data['company_id'] = absint($params['company_id']);
+        if (isset($params['company'])) {
+            $company = sanitize_text_field($params['company']);
+            $data['company'] = $company;
+        }
         
         $meta = json_decode($existing->meta_data, true) ?: array();
         if (isset($params['notes'])) $meta['notes'] = sanitize_textarea_field($params['notes']);
@@ -833,7 +840,7 @@ class Xophz_Compass_Quests_REST {
             'zip'             => $meta['zip'] ?? '',
             'created_at'      => $contact->created_at,
             'company_id'      => (int) $contact->company_id,
-            'company'         => $meta['company'] ?? '',
+            'company'         => !empty($contact->company) ? $contact->company : ($meta['company'] ?? ''),
             'servicePackage'  => $meta['servicePackage'] ?? 'COMPASS Executive Consulting',
             'paymentStatus'   => $meta['paymentStatus'] ?? 'Paid',
             'retainer'        => isset($meta['retainer']) ? (float) $meta['retainer'] : 2500,
@@ -1530,6 +1537,11 @@ class Xophz_Compass_Quests_REST {
             $where .= ' AND d.stage = %s';
             $params[] = $stage;
         }
+        $company_id = absint( $request->get_param('company_id') );
+        if ( $company_id ) {
+            $where .= ' AND d.company_id = %d';
+            $params[] = $company_id;
+        }
 
         $count_sql = "SELECT COUNT(*) FROM {$deals_table} d LEFT JOIN {$contacts_table} c ON d.contact_id = c.id WHERE {$where}";
         $total = $wpdb->get_var( $params ? $wpdb->prepare($count_sql, ...$params) : $count_sql );
@@ -2137,12 +2149,22 @@ class Xophz_Compass_Quests_REST {
         $org = $wpdb->get_row( $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id) );
         if ( ! $org ) return new WP_Error( 'not_found', 'Organization not found', array('status' => 404) );
 
+        $contacts_table = $wpdb->prefix . 'xophz_qb_contacts';
+        $deals_table = $wpdb->prefix . 'xophz_qb_deals';
+        $contacts_count = (int) $wpdb->get_var( $wpdb->prepare("SELECT COUNT(*) FROM {$contacts_table} WHERE company_id = %d", $id) );
+        $deals_count = (int) $wpdb->get_var( $wpdb->prepare("SELECT COUNT(*) FROM {$deals_table} WHERE company_id = %d", $id) );
+        $deals_revenue = (float) $wpdb->get_var( $wpdb->prepare("SELECT COALESCE(SUM(amount), 0) FROM {$deals_table} WHERE company_id = %d AND stage != 'Lost'", $id) );
+
         return rest_ensure_response(array(
-            'id' => (int) $org->id,
-            'name' => $org->name,
-            'domain' => $org->domain,
-            'industry' => $org->industry,
-            'created_at' => $org->created_at
+            'id'             => (int) $org->id,
+            'name'           => $org->name,
+            'domain'         => $org->domain,
+            'industry'       => $org->industry,
+            'contacts_count' => $contacts_count,
+            'deals_count'    => $deals_count,
+            'deals_revenue'  => $deals_revenue,
+            'created_at'     => $org->created_at,
+            'updated_at'     => $org->updated_at ?? $org->created_at,
         ));
     }
 
